@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>BatchBeat</title>
+  <link rel="icon" type="image/x-icon" href="/images/logo2.ico" />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#060606;--surface:rgba(10,10,10,.92);--border:rgba(255,255,255,.08);
+      --accent:#8c68ff;--accent-soft:#86e8ff;--text:#f3f3f3;
+      --muted:#9aa1b4;--danger:#ff5f7a;--done:#4dff91;--warn:#ffd166;
+    }
+    body{min-height:100vh;background:#060606;color:var(--text);font-family:'DM Sans',sans-serif;position:relative;overflow-x:hidden;}
+    body::before{content:'';position:fixed;inset:0;background:url('/images/im_bg.jpg') center/cover no-repeat fixed;opacity:.18;filter:blur(26px) saturate(1.2);pointer-events:none;z-index:-2}
+    body::after{content:'';position:fixed;inset:0;background:radial-gradient(circle at top right,rgba(140,104,255,.24),transparent 24%),radial-gradient(circle at bottom left,rgba(134,232,255,.18),transparent 18%);pointer-events:none;z-index:-1}
+    .page-shell{width:min(1080px,calc(100% - 32px));margin:0 auto;padding:24px 0 52px}
+    .hero{display:grid;grid-template-columns:1.05fr .95fr;gap:24px;align-items:center;margin-bottom:28px;min-height:260px}
+    .hero-copy{padding:30px 28px 28px;background:rgba(7,7,7,.92);border:1px solid rgba(255,255,255,.08);border-radius:32px;backdrop-filter:blur(18px);box-shadow:0 32px 90px rgba(0,0,0,.22)}
+    .eyebrow{display:inline-flex;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--accent);margin-bottom:20px}
+    .hero-title{font-family:'Bebas Neue',sans-serif;font-size:clamp(42px,7vw,70px);line-height:1.05;color:#fff;margin-bottom:12px;max-width:42ch;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+    .hero-brand{display:flex;align-items:center;gap:18px;margin-bottom:18px}
+    .brand-logo-wrap{position:relative;width:136px;height:136px;display:flex;align-items:center;justify-content:center}
+    .brand-logo-wrap::before{content:'';position:absolute;inset:-8px;background:radial-gradient(circle,rgba(140,104,255,.18),transparent 68%);border-radius:28px;filter:blur(8px);}
+    .brand-logo{width:124px;height:124px;object-fit:cover;object-position:center top;border-radius:24px;border:2px solid rgba(255,255,255,.18);box-shadow:0 34px 110px rgba(140,104,255,.28);transform:scale(1.16)}
+    .brand-copy{display:flex;flex-direction:column;gap:4px}
+    .brand-name{font-family:'Bebas Neue',sans-serif;font-size:22px;color:#fff;letter-spacing:.24em;text-transform:uppercase;word-break:break-word}
+    .brand-tagline{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);letter-spacing:1.8px;text-transform:uppercase}
+    .hero-text{font-size:15px;line-height:1.75;color:rgba(255,255,255,.82);max-width:560px;margin-bottom:20px}
+    .hero-actions{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:12px}
+    .hero-card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:28px;padding:16px;display:grid;gap:12px}
+    .hero-card .input-label{margin-top:0}
+    .hero-card textarea{min-height:100px;background:rgba(140,104,255,.08);border:1px solid rgba(140,104,255,.3);color:var(--text);padding:14px;border-radius:12px;font-family:'DM Mono',monospace;font-size:13px;resize:vertical;transition:all .2s}
+    .hero-card textarea:focus{background:rgba(140,104,255,.12);border-color:rgba(140,104,255,.6);outline:none;box-shadow:0 0 0 3px rgba(140,104,255,.1)}
+    .input-hint{font-size:11px;color:rgba(255,255,255,.55);margin-top:-4px}
+    .sel-actions{display:flex;gap:8px;margin-left:auto}
+    .panel-header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+    .panel-title{font-size:16px;font-weight:600;color:#fff}
+    .sel-count{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)}
+    .message-bar{display:none;padding:13px 16px;border-radius:18px;font-family:'DM Mono',monospace;font-size:13px;color:#fff;line-height:1.5}
+    .message-bar.visible{display:block}
+    .message-bar.error{background:rgba(255,95,122,.18);border:1px solid rgba(255,95,122,.35);color:#fff}
+    .message-bar.success{background:rgba(77,255,145,.16);border:1px solid rgba(77,255,145,.3);color:#fff}
+    .hero-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:16px;margin-bottom:-8px}
+    .feature-card{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:22px;padding:18px;display:none;flex-direction:column;gap:12px}
+    .feature-icon{font-size:18px}
+    .feature-title{font-family:'DM Sans',sans-serif;font-size:14px;color:#fff;font-weight:700}
+    .feature-copy{font-family:'DM Sans',sans-serif;font-size:13px;line-height:1.75;color:rgba(255,255,255,.74)}
+    .feature-card.show{display:flex}
+    .hero-visual{position:relative;display:flex;justify-content:center;align-items:center}
+    .hero-art{position:relative;width:100%;min-height:260px;border-radius:28px;overflow:hidden;border:1px solid rgba(255,255,255,.1);box-shadow:0 34px 90px rgba(0,0,0,.28);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(0,0,0,.2))}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;border:none;border-radius:999px;cursor:pointer;font-family:'Bebas Neue',sans-serif;letter-spacing:1.2px;transition:all .18s ease}
+    .btn-primary{background:linear-gradient(135deg,var(--accent),#5fc2ff);color:#040404;font-size:16px;padding:16px 24px;min-width:180px}
+    .btn-primary:hover{transform:translateY(-2px);box-shadow:0 18px 36px rgba(140,104,255,.18)}
+    .btn-ghost{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:var(--text);font-size:14px;padding:14px 22px}
+    .btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+    .btn-danger-ghost{background:rgba(255,95,122,.08);border:1px solid rgba(255,95,122,.25);color:var(--danger);font-size:14px;padding:14px 22px}
+    .btn-danger-ghost:hover{border-color:var(--danger);background:rgba(255,95,122,.14)}
+    .hero-visual{position:relative;display:flex;justify-content:center;align-items:center}
+    .hero-art{position:relative;width:100%;min-height:420px;border-radius:36px;overflow:hidden;border:1px solid rgba(255,255,255,.1);box-shadow:0 42px 120px rgba(0,0,0,.3);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(0,0,0,.2))}
+    .hero-art img{width:100%;height:100%;object-fit:cover;display:block;filter:contrast(1.05)}
+    .hero-art::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,transparent 14%,rgba(0,0,0,.3) 100%);}
+    .hero-glow{position:absolute;border-radius:50%;filter:blur(34px);pointer-events:none}
+    .glow-1{width:180px;height:180px;top:12%;left:18%;background:rgba(140,104,255,.35)}
+    .glow-2{width:220px;height:220px;bottom:16%;right:14%;background:rgba(134,232,255,.28)}
+    .hero-badge{position:absolute;bottom:22px;left:22px;background:rgba(0,0,0,.65);border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:12px 18px;font-family:'DM Mono',monospace;font-size:11px;color:rgba(255,255,255,.95);display:inline-flex;align-items:center;gap:10px;backdrop-filter:blur(12px)}
+    .panel-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px}
+    .panel-card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:28px;padding:32px;box-shadow:0 28px 80px rgba(0,0,0,.16)}
+    .panel-card h2{font-family:'Bebas Neue',sans-serif;font-size:28px;color:#fff;margin-bottom:18px}
+    .panel-card p{font-family:'DM Sans',sans-serif;font-size:14px;line-height:1.75;color:rgba(255,255,255,.75)}
+    .mini-stat{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:center;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:20px;margin-bottom:16px}
+    .mini-stat span:first-child{font-size:20px}
+    .mini-stat strong{display:block;font-family:'DM Sans',sans-serif;font-size:14px;color:#fff}
+    .mini-stat small{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+    .status-bar{display:none;background:rgba(10,10,10,.88);border:1px solid rgba(255,255,255,.08);border-radius:28px;padding:14px 18px;margin-bottom:18px;font-family:'DM Mono',monospace;font-size:12px;align-items:center;gap:12px;backdrop-filter:blur(12px)}
+    .status-bar.visible{display:flex}
+    .panel-card .input-label{margin-top:18px}
+    .panel-card textarea{min-height:160px}
+    .container{width:100%;max-width:1140px;margin:0 auto}
+    .done-banner{display:none;background:linear-gradient(135deg,rgba(26,26,26,.95),rgba(11,11,11,.95));border:1px solid rgba(77,255,145,.2);border-radius:24px;padding:24px 28px;margin-top:18px;align-items:center;gap:18px;flex-wrap:wrap}
+    .done-banner.visible{display:flex}
+    .done-icon{font-size:32px}
+    .done-text h3{font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:2px;color:var(--done)}
+    .done-text p{font-size:13px;color:var(--muted);margin-top:4px}
+    .done-text code{font-family:'DM Mono',monospace;color:var(--accent-soft);font-size:12px}
+    .btn-new{margin-left:auto;padding:12px 22px;background:transparent;border:1px solid var(--done);color:var(--done);border-radius:999px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:1px;cursor:pointer;transition:all .15s}
+    .btn-new:hover{background:rgba(77,255,145,.1)}
+    .queue-header{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center}
+    .queue-stats{color:var(--accent)}
+    .song-card{background:rgba(9,9,9,.95);border:1px solid rgba(255,255,255,.07);border-radius:18px;padding:18px 20px;margin-bottom:14px;transition:border-color .2s}
+    .song-top{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+    .song-icon{font-size:16px;flex-shrink:0}
+    .song-title-q{font-size:13px;font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .folder-tag{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
+    .song-badge{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:1px;text-transform:uppercase;padding:4px 9px;border-radius:999px;flex-shrink:0}
+    .badge-queued{color:var(--muted);background:rgba(255,255,255,.04)}
+    .badge-downloading{color:var(--accent);background:rgba(140,104,255,.12)}
+    .badge-converting{color:var(--warn);background:rgba(255,209,102,.14)}
+    .badge-done{color:var(--done);background:rgba(77,255,145,.12)}
+    .badge-error{color:var(--danger);background:rgba(255,95,122,.12)}
+    .progress-track{height:6px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden}
+    .progress-fill{height:100%;background:linear-gradient(90deg,rgba(140,104,255,1),rgba(134,232,255,.9));border-radius:999px;transition:width .3s ease;width:0%}
+    .song-card.done .progress-fill{background:linear-gradient(90deg,rgba(77,255,145,1),rgba(122,255,200,.9))}
+    .song-card.error .progress-fill{background:linear-gradient(90deg,rgba(255,95,122,1),rgba(255,162,173,.9))}
+    .song-card.converting .progress-fill{background:linear-gradient(90deg,rgba(255,209,102,1),rgba(255,236,168,.9))}
+    .error-msg{font-size:11px;color:var(--danger);margin-top:10px;font-family:'DM Mono',monospace}
+    .folder-summary{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:16px 18px;margin-bottom:14px}
+    .folder-summary-title{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:12px}
+    .folder-chips{display:flex;flex-wrap:wrap;gap:8px}
+    .folder-chip{font-family:'DM Mono',monospace;font-size:11px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);color:var(--text);padding:8px 11px;border-radius:999px}
+    .selection-panel{display:none}
+    .selection-panel.visible{display:block}
+    .queue-section{display:none}
+    .queue-section.visible{display:block}
+    .song-row{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:16px;margin-bottom:12px;display:flex;align-items:center;gap:14px;cursor:pointer;transition:all .2s ease}
+    .song-row:hover{background:rgba(140,104,255,.08);border-color:rgba(140,104,255,.3)}
+    .song-row.error-row{opacity:.6;cursor:not-allowed;background:rgba(255,95,122,.06);border-color:rgba(255,95,122,.2)}
+    .song-row.deselected{background:rgba(255,255,255,.02);opacity:.7}
+    .checkbox{width:24px;height:24px;background:rgba(140,104,255,.2);border:2px solid rgba(140,104,255,.4);border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s}
+    .song-row:hover .checkbox{border-color:rgba(140,104,255,.8);background:rgba(140,104,255,.3)}
+    .song-row.deselected .checkbox{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.08)}
+    .tick{color:var(--accent);font-size:14px;opacity:0;transition:opacity .2s}
+    .song-row:not(.deselected) .tick{opacity:1}
+    .song-num{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);min-width:28px;text-align:center;flex-shrink:0}
+    .song-name{flex:1;font-size:14px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .song-artist-tag{font-family:'DM Mono',monospace;font-size:11px;color:rgba(140,104,255,.8);background:rgba(140,104,255,.1);padding:6px 12px;border-radius:12px;white-space:nowrap;flex-shrink:0}
+    .song-row.error-row .song-artist-tag{color:var(--danger);background:rgba(255,95,122,.1)}
+    .pagination{display:flex;gap:8px;justify-content:center;align-items:center;margin:24px 0;flex-wrap:wrap}
+    .page-btn{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:var(--text);padding:8px 12px;border-radius:8px;font-family:'DM Mono',monospace;font-size:12px;cursor:pointer;transition:all .2s}
+    .page-btn:hover:not(:disabled){background:rgba(140,104,255,.2);border-color:rgba(140,104,255,.6);color:var(--accent)}
+    .page-btn.active{background:linear-gradient(135deg,rgba(140,104,255,.4),rgba(134,232,255,.3));border-color:var(--accent);color:var(--accent)}
+    .page-btn:disabled{opacity:.5;cursor:not-allowed}
+    .page-info{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);padding:0 8px}
+    .start-bar{display:flex;align-items:center;gap:16px;margin-top:24px;padding-top:20px;border-top:1px solid rgba(255,255,255,.08);flex-wrap:wrap}
+    .start-summary{font-size:14px;color:var(--text);flex:1}
+    .start-summary strong{color:var(--accent);font-weight:600}
+    .btn:disabled{opacity:.5;cursor:not-allowed;transform:none!important}
+    .spinner{display:inline-block;width:20px;height:20px;border:3px solid rgba(140,104,255,.3);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .floating-images{position:fixed;inset:0;pointer-events:none;z-index:-2}
+    .float-img{position:absolute;width:72px;max-width:72px;opacity:.12;filter:blur(1px);border-radius:16px;pointer-events:none;transform:translateZ(0)}
+    .float-a{top:10%;left:6%;width:68px}
+    .float-b{top:28%;right:8%;width:62px}
+    .float-c{bottom:8%;left:16%;width:76px;opacity:.1}
+    .loading-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);backdrop-filter:blur(10px);z-index:9999;align-items:center;justify-content:center}
+    .loading-overlay.visible{display:flex}
+    .overlay-floats{position:absolute;inset:0;pointer-events:none;z-index:0}
+    .overlay-float{position:absolute;width:64px;opacity:.1;filter:blur(1px);border-radius:16px;pointer-events:none;transform:translateZ(0)}
+    .overlay-float.o1{top:10%;left:12%;width:64px}
+    .overlay-float.o2{bottom:18%;right:10%;width:56px}
+    .overlay-float.o3{top:22%;right:18%;width:60px}
+    .loading-content{text-align:center;background:rgba(12,12,12,.98);border:1px solid rgba(140,104,255,.25);border-radius:32px;padding:46px 42px;backdrop-filter:blur(24px);box-shadow:0 28px 80px rgba(0,0,0,.35);max-width:360px;width:min(92vw,360px);position:relative;z-index:1}
+    .loading-icon{display:flex;flex-direction:column;align-items:center;gap:16px;margin-bottom:18px}
+    .loading-note{font-size:44px;line-height:1;color:var(--accent);animation:note-bounce 1.2s ease-in-out infinite}
+    .music-eq{display:flex;gap:10px;justify-content:center;margin:0 auto}
+    .music-eq .bar{width:12px;height:38px;background:linear-gradient(180deg,var(--accent),#5fc2ff);border-radius:999px;transform-origin:bottom center;animation:eq 1s infinite ease-in-out;opacity:.95}
+    .music-eq .b1{animation-delay:0s}
+    .music-eq .b2{animation-delay:0.14s}
+    .music-eq .b3{animation-delay:0.28s}
+    .music-eq .b4{animation-delay:0.42s}
+    .music-eq .b5{animation-delay:0.56s}
+    @keyframes eq{0%{transform:scaleY(.35);opacity:.55}40%{transform:scaleY(1);opacity:1}80%{transform:scaleY(.45);opacity:.65}100%{transform:scaleY(.35);opacity:.55}}
+    @keyframes note-bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+    .loading-text{font-size:17px;color:var(--text);font-weight:600;letter-spacing:.7px}
+    .loading-subtitle{font-size:13px;color:var(--muted);margin-top:10px;font-family:'DM Mono',monospace}
+    @media(max-width:980px){.hero{grid-template-columns:1fr}.panel-grid{grid-template-columns:1fr}.hero-grid{grid-template-columns:1fr}}
+    @media(max-width:720px){.page-shell{padding:24px 0 48px}.hero-copy{padding:22px}.hero-art{min-height:320px}.hero-actions{flex-direction:column}.btn-primary,.btn-ghost{width:100%}.feature-grid{grid-template-columns:1fr}.mini-stat{grid-template-columns:1fr}.song-row{flex-direction:column;align-items:flex-start}.song-artist-tag{align-self:flex-end}}
+    .site-footer{margin-top:42px;padding:30px 24px 16px;border-top:1px solid rgba(255,255,255,.08);display:flex;justify-content:space-between;align-items:center;gap:16px;color:rgba(255,255,255,.76);font-size:14px}
+    .footer-copy{max-width:calc(100% - 320px)}
+    .footer-copy strong{color:#fff}
+    .contact-links{display:flex;flex-wrap:wrap;gap:12px;justify-content:flex-end}
+    .contact-link{display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:999px;border:1px solid rgba(255,255,255,.12);color:inherit;text-decoration:none;transition:transform .2s ease,background .2s ease,box-shadow .2s ease}
+    .contact-link:hover{transform:translateY(-1px);background:rgba(255,255,255,.06);box-shadow:0 18px 45px rgba(0,0,0,.12)}
+  </style>
+</head>
+<body>
+  <div class="floating-images" aria-hidden="true">
+    <img src="/images/im1.jpg" class="float-img float-a" alt="" />
+    <img src="/images/im2.jpg" class="float-img float-b" alt="" />
+    <img src="/images/view-futuristic-music-robot-droid.jpg" class="float-img float-c" alt="" />
+  </div>
+  <div class="page-shell">
+    <div class="loading-overlay" id="loadingOverlay">
+      <div class="overlay-floats" aria-hidden="true">
+        <img src="/images/im1.jpg" class="overlay-float o1" alt="" />
+        <img src="/images/im2.jpg" class="overlay-float o2" alt="" />
+        <img src="/images/view-futuristic-music-robot-droid.jpg" class="overlay-float o3" alt="" />
+      </div>
+      <div class="loading-content">
+        <div class="loading-icon">
+          <div class="loading-note">♪</div>
+          <div class="music-eq" aria-hidden="true">
+            <div class="bar b1"></div>
+            <div class="bar b2"></div>
+            <div class="bar b3"></div>
+            <div class="bar b4"></div>
+            <div class="bar b5"></div>
+          </div>
+        </div>
+        <div class="loading-text" id="loadingText">Resolving URLs…</div>
+        <div class="loading-subtitle" id="loadingSubtitle"></div>
+        <div class="loading-progress">
+          <div class="progress-track"><div class="progress-fill" id="loadingProgress"></div></div>
+          <div class="loading-progress-label" id="loadingProgressLabel">0% complete</div>
+        </div>
+      </div>
+    </div>
+    <div class="hero">
+      <div class="hero-copy">
+        <div class="hero-brand">
+          <div class="brand-logo-wrap">
+            <img src="/images/logo1.png" class="brand-logo" alt="BatchBeat logo" />
+          </div>
+          <div class="brand-copy">
+            <span class="brand-name">BatchBeat</span>
+            <span class="brand-tagline">Download. Play. Feel the beat.</span>
+          </div>
+        </div>
+        <span class="eyebrow">Paste the vibe</span>
+        <h1 class="hero-title">Drop links.<br>Build playlists.<br>Own the mood.</h1>
+        <p class="hero-text">A bold batch downloader for music lovers who want speed, style, and total control. Resolve YouTube playlists, choose the songs you want, and watch progress in real time.</p>
+        <div class="hero-actions">
+          <button class="btn btn-primary" onclick="document.getElementById('urlInput').focus()">Start your batch</button>
+          <button class="btn btn-ghost" onclick="document.getElementById('urlInput').focus()">Paste links</button>
+        </div>
+        <div class="hero-card">
+          <span class="input-label">Paste URLs</span>
+          <textarea id="urlInput" placeholder="https://youtube.com/playlist?list=...\nhttps://youtu.be/dQw4w9WgXcQ\nhttps://youtu.be/another_video"></textarea>
+          <div class="input-hint">Supports playlists, individual videos, and mixes. One link per line.</div>
+          <div class="message-bar" id="messageBar"></div>
+          <button class="btn btn-primary" id="resolveBtn" onclick="resolveURLs()">LOAD SONGS</button>
+        </div>
+        <div class="hero-grid">
+          <div class="feature-card"><span class="feature-icon">🎧</span><div class="feature-title">Playlist resolve</div><div class="feature-copy">Auto-detect playlists and tracks before you download.</div></div>
+          <div class="feature-card"><span class="feature-icon">⚡</span><div class="feature-title">Live progress</div><div class="feature-copy">Monitor each song from download to conversion.</div></div>
+          <div class="feature-card"><span class="feature-icon">📁</span><div class="feature-title">Artist folders</div><div class="feature-copy">Tracks are saved into clean artist-organized folders.</div></div>
+        </div>
+      </div>
+      <div class="hero-visual">
+        <div class="hero-art">
+          <img src="/images/view-futuristic-music-robot-droid.jpg" alt="Futuristic music visual" />
+          <div class="hero-glow glow-1"></div>
+          <div class="hero-glow glow-2"></div>
+          <div class="hero-badge">Ready for the next drop</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="status-bar" id="statusBar">
+      <div class="spinner"></div>
+      <span class="status-text" id="statusText">Resolving URLs…</span>
+      <span class="status-count" id="statusCount"></span>
+    </div>
+
+    <div class="selection-panel" id="selectionPanel">
+      <div class="panel-card">
+        <div class="panel-header">
+          <span class="panel-title">Choose songs</span>
+          <span class="sel-count" id="selCount"></span>
+          <div class="sel-actions">
+            <button class="btn btn-ghost" onclick="selectAll()">All</button>
+            <button class="btn btn-danger-ghost" onclick="deselectAll()">None</button>
+          </div>
+        </div>
+        <div id="songPickerList"></div>
+        <div class="pagination" id="pagination"></div>
+        <div class="start-bar">
+          <span class="start-summary" id="startSummary"></span>
+          <button class="btn btn-primary" id="startBtn" onclick="startDownload()">DOWNLOAD</button>
+          <button class="btn btn-ghost" onclick="resetApp()">Back</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="queue-section" id="queueSection">
+      <div class="folder-summary" id="folderSummary" style="display:none">
+        <div class="folder-summary-title">Saving to folders</div>
+        <div class="folder-chips" id="folderChips"></div>
+      </div>
+      <div class="queue-header">
+        <span>Downloading</span>
+        <span class="queue-stats" id="queueStats"></span>
+      </div>
+      <div id="songList"></div>
+    </div>
+
+    <div class="done-banner" id="doneBanner">
+      <div class="done-icon">🎵</div>
+      <div class="done-text">
+        <h3>ALL DONE!</h3>
+        <p>MP3s organized in <code id="downloadPath">downloads/</code></p>
+      </div>
+      <button class="btn-new" onclick="resetApp()">+ NEW BATCH</button>
+    </div>
+
+    <footer class="site-footer">
+      <div class="footer-copy">
+        <div><strong>BatchBeat</strong> is built for fast batch downloads and clean MP3 organization.</div>
+        <div>Reach out for portfolio work, GitHub projects, or direct support.</div>
+      </div>
+      <div class="contact-links">
+        <a class="contact-link" href="https://abfiras.github.io/portfolio/en" target="_blank" rel="noreferrer">Portfolio</a>
+        <a class="contact-link" href="https://github.com/abFiras" target="_blank" rel="noreferrer">GitHub</a>
+        <a class="contact-link" href="mailto:abdallah.firas@outlook.fr">Email</a>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    const PER_PAGE = 10;
+    let currentJobId = null;
+    let pollInterval = null;
+    let resolvedSongs = [];
+    let currentPage = 1;
+
+    async function resolveURLs() {
+      hideMessage();
+      const raw = document.getElementById("urlInput").value.trim();
+      if (!raw) {
+        showMessage("error", "Please paste at least one YouTube link.");
+        return;
+      }
+      const urls = raw.split("\n").map(u => u.trim()).filter(Boolean);
+      if (!urls.length) {
+        showMessage("error", "Please enter valid URLs, one per line.");
+        return;
+      }
+
+      document.getElementById("resolveBtn").disabled = true;
+      showLoading("Fetching songs…", "");
+      try {
+        const res = await fetch("/resolve", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({urls})
+        });
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(body || "Unable to start resolution.");
+        }
+        const data = await res.json();
+        currentJobId = data.job_id;
+        pollInterval = setInterval(pollResolve, 700);
+      } catch (err) {
+        showMessage("error", err.message || "Failed to resolve URLs. Try again.");
+        hideLoading();
+        document.getElementById("resolveBtn").disabled = false;
+      }
+    }
+
+    async function pollResolve() {
+      try {
+        const res = await fetch("/status/" + currentJobId);
+        if (!res.ok) throw new Error("Failed to check status.");
+        const job = await res.json();
+        if (job.resolved) {
+          clearInterval(pollInterval);
+          hideLoading();
+          resolvedSongs = job.songs || [];
+          currentPage = 1;
+          document.getElementById("selectionPanel").classList.add("visible");
+          renderPage(currentPage);
+          updateSelCount();
+          document.getElementById("resolveBtn").disabled = false;
+
+          const artists = [...new Set(resolvedSongs.filter(s=>s.status!=="error").map(s=>s.artist||"Unknown Artist"))];
+          showFolderSummary(artists);
+        }
+      } catch (err) {
+        clearInterval(pollInterval);
+        showMessage("error", err.message || "Resolve failed. Please try again.");
+        hideLoading();
+        document.getElementById("resolveBtn").disabled = false;
+      }
+    }
+
+    function totalPages() { return resolvedSongs && resolvedSongs.length ? Math.ceil(resolvedSongs.length / PER_PAGE) : 0; }
+
+    function renderPage(page) {
+      currentPage = page;
+      const start = (page - 1) * PER_PAGE;
+      const end = start + PER_PAGE;
+      const slice = resolvedSongs.slice(start, end);
+      const list = document.getElementById("songPickerList");
+      list.innerHTML = "";
+
+      slice.forEach((song, rel) => {
+        const abs = start + rel;
+        const isError = song.status === "error";
+        const isSelected = song.selected !== false;
+        const row = document.createElement("div");
+        row.className = "song-row" + (isError ? " error-row" : (isSelected ? "" : " deselected"));
+        row.id = "pick-" + abs;
+        row.dataset.selected = isError ? "false" : String(isSelected);
+        row.innerHTML =
+          '<div class="checkbox"><span class="tick">✔</span></div>' +
+          '<span class="song-num">' + (abs + 1) + '</span>' +
+          '<span class="song-name">' + escHtml(song.title) + '</span>' +
+          '<span class="song-artist-tag">' + escHtml(song.artist || "") + '</span>' +
+          (isError ? '<span style="font-family:DM Mono,monospace;font-size:10px;color:var(--danger)">error</span>' : '');
+        if (!isError) row.onclick = () => toggleSong(abs);
+        list.appendChild(row);
+      });
+
+      renderPagination();
+    }
+
+    function renderPagination() {
+      const tp = totalPages();
+      const pg = document.getElementById("pagination");
+      if (tp <= 1) { pg.innerHTML = ""; return; }
+      if (currentPage > tp) currentPage = tp;
+      if (currentPage < 1) currentPage = 1;
+      pg.innerHTML = "";
+
+      const prev = document.createElement("button");
+      prev.className = "page-btn";
+      prev.textContent = "←";
+      prev.disabled = currentPage === 1;
+      prev.onclick = () => renderPage(currentPage - 1);
+      pg.appendChild(prev);
+
+      let start = Math.max(1, currentPage - 2);
+      let end = Math.min(tp, start + 4);
+      if (end - start < 4) start = Math.max(1, end - 4);
+
+      if (start > 1) {
+        pg.appendChild(makePageBtn(1));
+        if (start > 2) { const d = document.createElement("span"); d.className="page-info"; d.textContent="…"; pg.appendChild(d); }
+      }
+      for (let p = start; p <= end; p++) pg.appendChild(makePageBtn(p));
+      if (end < tp) {
+        if (end < tp - 1) { const d = document.createElement("span"); d.className="page-info"; d.textContent="…"; pg.appendChild(d); }
+        pg.appendChild(makePageBtn(tp));
+      }
+
+      const next = document.createElement("button");
+      next.className = "page-btn";
+      next.textContent = "→";
+      next.disabled = currentPage === tp;
+      next.onclick = () => renderPage(currentPage + 1);
+      pg.appendChild(next);
+
+      const info = document.createElement("span");
+      info.className = "page-info";
+      info.textContent = "Page " + currentPage + " of " + tp;
+      pg.appendChild(info);
+    }
+
+    function makePageBtn(p) {
+      const b = document.createElement("button");
+      b.className = "page-btn" + (p === currentPage ? " active" : "");
+      b.textContent = p;
+      b.onclick = () => renderPage(p);
+      return b;
+    }
+
+    function toggleSong(abs) {
+      resolvedSongs[abs].selected = !(resolvedSongs[abs].selected !== false);
+      const row = document.getElementById("pick-" + abs);
+      if (row) {
+        row.dataset.selected = String(resolvedSongs[abs].selected);
+        row.classList.toggle("deselected", !resolvedSongs[abs].selected);
+      }
+      updateSelCount();
+    }
+
+    function selectAll() {
+      resolvedSongs.forEach((s, i) => { if (s.status !== "error") s.selected = true; });
+      renderPage(currentPage);
+      updateSelCount();
+    }
+
+    function deselectAll() {
+      resolvedSongs.forEach(s => { s.selected = false; });
+      renderPage(currentPage);
+      updateSelCount();
+    }
+
+    function updateSelCount() {
+      const total = resolvedSongs.filter(s => s.status !== "error").length;
+      const sel = resolvedSongs.filter(s => s.selected).length;
+      document.getElementById("selCount").textContent = sel + " / " + total + " selected";
+      document.getElementById("startSummary").innerHTML = "Will download <strong>" + sel + "</strong> song" + (sel !== 1 ? "s" : "");
+      document.getElementById("startBtn").disabled = sel === 0;
+    }
+
+    function showFolderSummary(artists) {
+      const chips = document.getElementById("folderChips");
+      chips.innerHTML = "";
+      artists.slice(0, 20).forEach(a => {
+        const chip = document.createElement("span");
+        chip.className = "folder-chip";
+        chip.textContent = "📁 " + a;
+        chips.appendChild(chip);
+      });
+      if (artists.length > 20) {
+        const chip = document.createElement("span");
+        chip.className = "folder-chip";
+        chip.textContent = "+" + (artists.length - 20) + " more";
+        chips.appendChild(chip);
+      }
+    }
+
+    async function startDownload() {
+      hideMessage();
+      const selectedIndices = resolvedSongs.map((s, i) => s.selected ? i : -1).filter(i => i >= 0);
+      if (!selectedIndices.length) {
+        showMessage("error", "Select at least one song before downloading.");
+        return;
+      }
+
+      document.getElementById("selectionPanel").classList.remove("visible");
+      document.getElementById("queueSection").classList.add("visible");
+
+      const artists = [...new Set(resolvedSongs.filter((s,i) => selectedIndices.includes(i)).map(s => s.artist || "Unknown Artist"))];
+      document.getElementById("folderSummary").style.display = "block";
+      const chips = document.getElementById("folderChips");
+      chips.innerHTML = "";
+      artists.forEach(a => {
+        const chip = document.createElement("span"); chip.className = "folder-chip";
+        chip.textContent = a; chips.appendChild(chip);
+      });
+
+      showLoading("Downloading…", "Preparing your batch");
+      try {
+        const pathRes = await fetch("/downloads-path");
+        if (!pathRes.ok) throw new Error("Unable to determine download folder.");
+        const pathData = await pathRes.json();
+        document.getElementById("downloadPath").textContent = pathData.path;
+
+        const startRes = await fetch("/start", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({job_id: currentJobId, selected: selectedIndices})
+        });
+        if (!startRes.ok) {
+          const body = await startRes.text();
+          throw new Error(body || "Unable to start download.");
+        }
+
+        pollInterval = setInterval(pollDownload, 700);
+      } catch (err) {
+        showMessage("error", err.message || "Download failed to start.");
+        hideLoading();
+        document.getElementById("queueSection").classList.remove("visible");
+      }
+    }
+
+    async function pollDownload() {
+      try {
+        const res = await fetch("/status/" + currentJobId);
+        if (!res.ok) throw new Error("Unable to fetch download status.");
+        const job = await res.json();
+        const songs = job.songs || [];
+        renderQueue(songs);
+
+        const sel = songs.filter(s => s.selected);
+        const done = sel.filter(s => s.status === "done").length;
+        const errors = sel.filter(s => s.status === "error").length;
+        const total = sel.length;
+        const percent = total ? Math.round((done / total) * 100) : 0;
+        updateLoadingText("Downloading", done + " of " + total + " complete · " + errors + " errors");
+        updateLoadingProgress(percent);
+        document.getElementById("queueStats").textContent = done + " / " + total + " complete";
+
+        if (job.status === "done") {
+          clearInterval(pollInterval);
+          hideLoading();
+          document.getElementById("doneBanner").classList.add("visible");
+        }
+      } catch (err) {
+        clearInterval(pollInterval);
+        hideLoading();
+        showMessage("error", err.message || "Download tracking failed.");
+      }
+    }
+
+    function renderQueue(songs) {
+      const list = document.getElementById("songList");
+      songs.forEach((song, i) => {
+        if (!song.selected) return;
+        let card = document.getElementById("qcard-" + i);
+        if (!card) {
+          card = document.createElement("div");
+          card.id = "qcard-" + i;
+          card.innerHTML =
+            '<div class="song-top">' +
+              '<span class="song-icon">🎵</span>' +
+              '<span class="song-title-q" id="qt-' + i + '"></span>' +
+              '<span class="folder-tag" id="qf-' + i + '"></span>' +
+              '<span class="song-badge" id="qb-' + i + '"></span>' +
+            '</div>' +
+            '<div class="progress-track"><div class="progress-fill" id="qp-' + i + '"></div></div>' +
+            '<div class="error-msg" id="qe-' + i + '" style="display:none"></div>';
+          list.appendChild(card);
+        }
+        card.className = "song-card " + song.status;
+        document.getElementById("qt-" + i).textContent = song.title;
+        document.getElementById("qf-" + i).textContent = song.folder ? "📁 " + song.folder : song.artist || "";
+        document.getElementById("qp-" + i).style.width = (song.progress || 0) + "%";
+        const labels = {queued:"Queued",downloading:"Downloading",converting:"Converting",done:"Done ✓",error:"Error"};
+        const badge = document.getElementById("qb-" + i);
+        badge.textContent = labels[song.status] || song.status;
+        badge.className = "song-badge badge-" + song.status;
+        const errEl = document.getElementById("qe-" + i);
+        if (song.status === "error" && song.error) { errEl.textContent = song.error; errEl.style.display = "block"; }
+        else { errEl.style.display = "none"; }
+      });
+    }
+
+    function showStatus(t, c) { document.getElementById("statusBar").classList.add("visible"); document.getElementById("statusText").textContent = t; document.getElementById("statusCount").textContent = c; }
+    function hideStatus() { document.getElementById("statusBar").classList.remove("visible"); }
+    function showLoading(title, subtitle, percent = 0) { 
+      document.getElementById("loadingOverlay").classList.add("visible");
+      document.getElementById("loadingText").textContent = title;
+      document.getElementById("loadingSubtitle").textContent = subtitle;
+      updateLoadingProgress(percent);
+    }
+    function hideLoading() { document.getElementById("loadingOverlay").classList.remove("visible"); }
+    function updateLoadingText(title, subtitle) {
+      document.getElementById("loadingText").textContent = title;
+      document.getElementById("loadingSubtitle").textContent = subtitle;
+    }
+    function updateLoadingProgress(percent) {
+      const fill = document.getElementById("loadingProgress");
+      const label = document.getElementById("loadingProgressLabel");
+      if (!fill || !label) return;
+      const clamped = Math.max(0, Math.min(100, percent));
+      fill.style.width = clamped + "%";
+      label.textContent = clamped + "% complete";
+    }
+    function showMessage(type, message) {
+      const bar = document.getElementById("messageBar");
+      if (!bar) return;
+      bar.textContent = message || "";
+      bar.className = "message-bar visible " + (type === "error" ? "error" : "success");
+    }
+    function hideMessage() { const bar = document.getElementById("messageBar"); if (bar) { bar.className = "message-bar"; bar.textContent = ""; } }
+    function escHtml(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+    function resetApp() {
+      currentJobId = null; clearInterval(pollInterval); resolvedSongs = []; currentPage = 1;
+      document.getElementById("urlInput").value = "";
+      document.getElementById("resolveBtn").disabled = false;
+      document.getElementById("selectionPanel").classList.remove("visible");
+      document.getElementById("queueSection").classList.remove("visible");
+      document.getElementById("doneBanner").classList.remove("visible");
+      document.getElementById("songPickerList").innerHTML = "";
+      document.getElementById("songList").innerHTML = "";
+      document.getElementById("pagination").innerHTML = "";
+      document.getElementById("folderSummary").style.display = "none";
+      hideLoading();
+      hideMessage();
+    }
+  </script>
+</body>
+</html>
