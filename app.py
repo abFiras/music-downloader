@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import threading
 from flask import Flask, render_template, request, jsonify
 import yt_dlp
@@ -108,25 +109,28 @@ def download_job(job_id):
         artist_folder = os.path.join(DOWNLOAD_FOLDER, artist)
         os.makedirs(artist_folder, exist_ok=True)
 
+        has_ffmpeg = bool(shutil.which("ffmpeg") or shutil.which("ffmpeg.exe"))
         ydl_opts = {
             "format": "bestaudio/best",
             "outtmpl": os.path.join(artist_folder, "%(title)s.%(ext)s"),
-            "postprocessors": [
+            "quiet": True,
+            "no_warnings": True,
+            "progress_hooks": [make_progress_hook(job_id, i)],
+        }
+        if has_ffmpeg:
+            ydl_opts["postprocessors"] = [
                 {
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
                     "preferredquality": "192",
                 },
                 {
-                    # Embed artist, title metadata into the MP3
                     "key": "FFmpegMetadata",
                     "add_metadata": True,
                 },
-            ],
-            "quiet": True,
-            "no_warnings": True,
-            "progress_hooks": [make_progress_hook(job_id, i)],
-        }
+            ]
+        else:
+            ydl_opts["noplaylist"] = True
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
