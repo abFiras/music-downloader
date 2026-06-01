@@ -222,6 +222,8 @@ def suppress_appspecific(filename):
 
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    host = os.environ.get("HOST", "0.0.0.0")
     print("\n  Music Downloader is running!")
-    print("  Open http://localhost:5000 in your browser\n")
-    app.run(debug=False, port=5000)
+    print(f"  Open http://{host}:{port} in your browser\n")
+    app.run(debug=False, host=host, port=port)

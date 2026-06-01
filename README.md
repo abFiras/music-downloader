@@ -69,6 +69,10 @@ music-downloader/
 │   └── index.html        # Web UI
 ├── images/               # Static assets and favicon
 ├── downloads/            # Downloaded files (created automatically)
+├── mobile-app/           # Expo mobile app workspace
+│   ├── App.js
+│   ├── package.json
+│   └── README.md
 └── README.md             # This file
 ```
 
@@ -84,6 +88,28 @@ downloads/
 └── Artist Name 2/
     └── Song 3.mp3
 ```
+
+## Free deployment
+
+This app can be hosted on free Python web platforms such as Render, Railway, or Replit. It already includes:
+
+- `requirements.txt` for Python dependencies
+- `Procfile` for `gunicorn`
+- `runtime.txt` to pin Python 3.11
+
+### Recommended free deploy workflow
+
+1. Push this repository to GitHub.
+2. Sign in to Render.com or Railway.app.
+3. Create a new Python web service.
+4. Point the service to this GitHub repo.
+5. Set the start command to:
+   ```bash
+   gunicorn app:app --bind 0.0.0.0:$PORT
+   ```
+6. Deploy.
+
+> Note: Many free hosts use ephemeral storage. `downloads/` is created automatically, but files may not persist after the app restarts.
 
 ## Troubleshooting
 
