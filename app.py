@@ -12,6 +12,9 @@ app.jinja_env.auto_reload = True
 DOWNLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "downloads")
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
+COOKIES_FILE = os.environ.get("YTDLP_COOKIES_FILE")
+COOKIES_FROM_BROWSER = os.environ.get("YTDLP_COOKIES_FROM_BROWSER")
+
 download_jobs = {}
 jobs_lock = threading.Lock()
 
@@ -50,7 +53,12 @@ def resolve_job(job_id, urls):
         if not url:
             continue
         try:
-            with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True, "skip_download": True}) as ydl:
+            ydl_opts = {"quiet": True, "extract_flat": True, "skip_download": True}
+            if COOKIES_FILE:
+                ydl_opts["cookiefile"] = COOKIES_FILE
+            if COOKIES_FROM_BROWSER:
+                ydl_opts["cookiesfrombrowser"] = COOKIES_FROM_BROWSER
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 if "entries" in info:
                     for entry in info["entries"]:
@@ -117,6 +125,10 @@ def download_job(job_id):
             "no_warnings": True,
             "progress_hooks": [make_progress_hook(job_id, i)],
         }
+        if COOKIES_FILE:
+            ydl_opts["cookiefile"] = COOKIES_FILE
+        if COOKIES_FROM_BROWSER:
+            ydl_opts["cookiesfrombrowser"] = COOKIES_FROM_BROWSER
         if has_ffmpeg:
             ydl_opts["postprocessors"] = [
                 {

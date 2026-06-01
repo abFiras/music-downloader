@@ -110,7 +110,17 @@ This app can be hosted on free Python web platforms such as Render, Railway, or 
 6. Deploy.
 
 > Note: Many free hosts use ephemeral storage. `downloads/` is created automatically, but files may not persist after the app restarts.
-
+>
+> Some YouTube videos require login/cookies to download. On Render, this means the app may need a cookies file to access those URLs.
+>
+> If you want to use cookies, set this environment variable in Render:
+>
+> ```bash
+> YTDLP_COOKIES_FILE=/path/to/cookies.txt
+> ```
+>
+> Then redeploy.
+>
 ## Troubleshooting
 
 ### Downloads don't convert to MP3
