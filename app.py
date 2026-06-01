@@ -1,6 +1,8 @@
+import atexit
 import os
 import re
 import shutil
+import tempfile
 import threading
 from flask import Flask, render_template, request, jsonify
 import yt_dlp
@@ -14,6 +16,24 @@ os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 COOKIES_FILE = os.environ.get("YTDLP_COOKIES_FILE")
 COOKIES_FROM_BROWSER = os.environ.get("YTDLP_COOKIES_FROM_BROWSER")
+COOKIES_CONTENT = os.environ.get("YTDLP_COOKIES_CONTENT")
+COOKIES_TEMP_FILE = None
+
+if COOKIES_CONTENT and not COOKIES_FILE:
+    temp_cookie = tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8")
+    temp_cookie.write(COOKIES_CONTENT)
+    temp_cookie.close()
+    COOKIES_FILE = temp_cookie.name
+    COOKIES_TEMP_FILE = temp_cookie.name
+
+    def clean_temp_cookie():
+        try:
+            if COOKIES_TEMP_FILE and os.path.exists(COOKIES_TEMP_FILE):
+                os.unlink(COOKIES_TEMP_FILE)
+        except OSError:
+            pass
+
+    atexit.register(clean_temp_cookie)
 
 download_jobs = {}
 jobs_lock = threading.Lock()
