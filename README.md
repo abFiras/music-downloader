@@ -113,13 +113,21 @@ This app can be hosted on free Python web platforms such as Render, Railway, or 
 >
 > Some YouTube videos require login/cookies to download. On Render, this means the app may need a cookies file to access those URLs.
 >
-> If you want to use cookies, set this environment variable in Render:
+> To use cookies in Render:
+>
+> 1. Export `cookies.txt` from your browser.
+> 2. Add `cookies.txt` to your project root (only if your repo is private).
+> 3. Set this environment variable in Render:
 >
 > ```bash
-> YTDLP_COOKIES_FILE=/path/to/cookies.txt
+> YTDLP_COOKIES_FILE=/opt/render/project/src/cookies.txt
 > ```
 >
-> Then redeploy.
+> 4. Redeploy the service.
+>
+> If your file is stored in a subfolder instead, update the path accordingly.
+>
+> **Do not commit your real `cookies.txt` to a public repo.**
 >
 ## Troubleshooting
 

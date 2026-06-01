@@ -1,0 +1,4 @@
+# Do not use this file for real cookies.
+# Export your own YouTube cookies using a browser extension or yt-dlp instructions.
+# Save the real cookies file as cookies.txt in the project root.
+# Then set YTDLP_COOKIES_FILE=/opt/render/project/src/cookies.txt in Render.
