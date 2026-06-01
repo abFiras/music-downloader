@@ -227,7 +227,7 @@
         </div>
         <div class="hero-card">
           <span class="input-label">Paste URLs</span>
-          <textarea id="urlInput" placeholder="https://youtube.com/playlist?list=...\nhttps://youtu.be/dQw4w9WgXcQ\nhttps://youtu.be/another_video"></textarea>
+          <textarea id="urlInput">https://www.youtube.com/watch?v=Tm8LGxTLtQk</textarea>
           <div class="input-hint">Supports playlists, individual videos, and mixes. One link per line.</div>
           <div class="message-bar" id="messageBar"></div>
           <button class="btn btn-primary" id="resolveBtn" onclick="resolveURLs()">LOAD SONGS</button>
@@ -298,6 +298,7 @@
     <footer class="site-footer">
       <div class="footer-copy">
         <div><strong>BatchBeat</strong> is built for fast batch downloads and clean MP3 organization.</div>
+        <div>Developed with love by Firas ABDALLAH · In loving memory of Chester Bennington.</div>
         <div>Reach out for portfolio work, GitHub projects, or direct support.</div>
       </div>
       <div class="contact-links">
@@ -643,7 +644,7 @@
 
     function resetApp() {
       currentJobId = null; clearInterval(pollInterval); resolvedSongs = []; currentPage = 1;
-      document.getElementById("urlInput").value = "";
+      document.getElementById("urlInput").value = "https://www.youtube.com/watch?v=Tm8LGxTLtQk";
       document.getElementById("resolveBtn").disabled = false;
       document.getElementById("selectionPanel").classList.remove("visible");
       document.getElementById("queueSection").classList.remove("visible");
@@ -655,6 +656,14 @@
       hideLoading();
       hideMessage();
     }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const urlInput = document.getElementById("urlInput");
+      if (urlInput && !urlInput.value.trim()) {
+        urlInput.value = "https://www.youtube.com/watch?v=Tm8LGxTLtQk";
+      }
+      resolveURLs();
+    });
   </script>
 </body>
 </html>
