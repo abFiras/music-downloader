@@ -7,3 +7,5 @@ venv/
 .env
 downloads/
 .DS_Store
+.vercel
+cookies.txt

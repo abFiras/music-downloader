@@ -18,11 +18,17 @@ COOKIES_FILE = os.environ.get("YTDLP_COOKIES_FILE")
 COOKIES_FROM_BROWSER = os.environ.get("YTDLP_COOKIES_FROM_BROWSER")
 COOKIES_CONTENT = os.environ.get("YTDLP_COOKIES_CONTENT")
 COOKIES_TEMP_FILE = None
+
+# NEW: residential proxy — helps bypass YouTube blocking datacenter IPs
+PROXY_URL = os.environ.get("YTDLP_PROXY")  # e.g. http://user:pass@host:port
+
+
 def _write_temp_cookie(content):
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8")
     tmp.write(content)
     tmp.close()
     return tmp.name
+
 
 # If cookie contents were provided (preferred), write them to a temp file.
 if COOKIES_CONTENT and not COOKIES_FILE:
@@ -30,21 +36,19 @@ if COOKIES_CONTENT and not COOKIES_FILE:
     COOKIES_FILE = _write_temp_cookie(COOKIES_CONTENT)
     COOKIES_TEMP_FILE = COOKIES_FILE
 
-# Handle the common mistake of pasting the cookie file contents into the
-# `YTDLP_COOKIES_FILE` env var (instead of a file path). If the value
-# doesn't point to an existing file but looks like Netscape cookie content,
-# write it to a temp file and use that.
+# Handle mistake: cookie content pasted instead of file path
 if COOKIES_FILE and not os.path.exists(COOKIES_FILE):
     looks_like_content = ("\n" in COOKIES_FILE) or COOKIES_FILE.strip().startswith("# Netscape")
     if looks_like_content:
-        print(f"[cookies] Detected cookie content in YTDLP_COOKIES_FILE env var ({len(COOKIES_FILE)} bytes), writing to temp file")
+        print(f"[cookies] Detected cookie content in env var, writing to temp file")
         COOKIES_TEMP_FILE = _write_temp_cookie(COOKIES_FILE)
         COOKIES_FILE = COOKIES_TEMP_FILE
         print(f"[cookies] Temp cookie file: {COOKIES_FILE}")
     else:
-        print(f"[cookies] YTDLP_COOKIES_FILE is not a valid path and doesn't look like cookie content")
+        print(f"[cookies] Invalid cookie path")
 elif COOKIES_FILE:
     print(f"[cookies] Using YTDLP_COOKIES_FILE: {COOKIES_FILE}")
+
 
 def clean_temp_cookie():
     try:
@@ -53,14 +57,37 @@ def clean_temp_cookie():
     except OSError:
         pass
 
+
 atexit.register(clean_temp_cookie)
+
+
+# ✅ NEW helper (central logic)
+def apply_common_opts(ydl_opts):
+    """Apply cookies, proxy, and anti-bot client args to any yt-dlp options dict."""
+    if COOKIES_FILE and os.path.exists(COOKIES_FILE):
+        ydl_opts["cookiefile"] = COOKIES_FILE
+    if COOKIES_FROM_BROWSER:
+        ydl_opts["cookiesfrombrowser"] = COOKIES_FROM_BROWSER
+    if PROXY_URL:
+        ydl_opts["proxy"] = PROXY_URL
+
+    # Helps bypass bot detection
+    ydl_opts.setdefault("extractor_args", {})
+    ydl_opts["extractor_args"].setdefault("youtube", {})
+    ydl_opts["extractor_args"]["youtube"]["player_client"] = ["android", "web"]
+
+    # Safer networking
+    ydl_opts.setdefault("retries", 3)
+    ydl_opts.setdefault("socket_timeout", 30)
+
+    return ydl_opts
+
 
 download_jobs = {}
 jobs_lock = threading.Lock()
 
 
 def sanitize(name):
-    """Remove characters not safe for folder/file names."""
     return re.sub(r'[\\/*?:"<>|]', "", name).strip() or "Unknown"
 
 
@@ -71,35 +98,43 @@ def make_progress_hook(job_id, song_index):
             if not job:
                 return
             song = job["songs"][song_index]
+
             if d["status"] == "downloading":
                 total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
                 downloaded = d.get("downloaded_bytes", 0)
                 percent = int((downloaded / total) * 100) if total else 0
                 song["progress"] = percent
                 song["status"] = "downloading"
+
             elif d["status"] == "finished":
                 song["progress"] = 100
                 song["status"] = "converting"
+
             elif d["status"] == "error":
                 song["status"] = "error"
                 song["error"] = str(d.get("error", "Unknown error"))
+
     return hook
 
 
 def resolve_job(job_id, urls):
     resolved_songs = []
+
     for url in urls:
         url = url.strip()
         if not url:
             continue
+
         try:
-            ydl_opts = {"quiet": True, "extract_flat": True, "skip_download": True}
-            if COOKIES_FILE:
-                ydl_opts["cookiefile"] = COOKIES_FILE
-            if COOKIES_FROM_BROWSER:
-                ydl_opts["cookiesfrombrowser"] = COOKIES_FROM_BROWSER
+            ydl_opts = apply_common_opts({
+                "quiet": True,
+                "extract_flat": True,
+                "skip_download": True,
+            })
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
+
                 if "entries" in info:
                     for entry in info["entries"]:
                         if entry:
@@ -120,6 +155,7 @@ def resolve_job(job_id, urls):
                         "progress": 0,
                         "selected": True,
                     })
+
         except Exception as e:
             resolved_songs.append({
                 "url": url,
@@ -152,23 +188,20 @@ def download_job(job_id):
         with jobs_lock:
             download_jobs[job_id]["songs"][i]["status"] = "downloading"
 
-        # Organize by artist folder
         artist = sanitize(song.get("artist", "Unknown Artist"))
         artist_folder = os.path.join(DOWNLOAD_FOLDER, artist)
         os.makedirs(artist_folder, exist_ok=True)
 
         has_ffmpeg = bool(shutil.which("ffmpeg") or shutil.which("ffmpeg.exe"))
-        ydl_opts = {
+
+        ydl_opts = apply_common_opts({
             "format": "bestaudio/best",
             "outtmpl": os.path.join(artist_folder, "%(title)s.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
             "progress_hooks": [make_progress_hook(job_id, i)],
-        }
-        if COOKIES_FILE:
-            ydl_opts["cookiefile"] = COOKIES_FILE
-        if COOKIES_FROM_BROWSER:
-            ydl_opts["cookiesfrombrowser"] = COOKIES_FROM_BROWSER
+        })
+
         if has_ffmpeg:
             ydl_opts["postprocessors"] = [
                 {
@@ -187,10 +220,12 @@ def download_job(job_id):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([song["url"]])
+
             with jobs_lock:
                 download_jobs[job_id]["songs"][i]["status"] = "done"
                 download_jobs[job_id]["songs"][i]["progress"] = 100
                 download_jobs[job_id]["songs"][i]["folder"] = artist
+
         except Exception as e:
             with jobs_lock:
                 download_jobs[job_id]["songs"][i]["status"] = "error"
@@ -209,6 +244,7 @@ def index():
 def resolve():
     data = request.get_json()
     urls = data.get("urls", [])
+
     if not urls:
         return jsonify({"error": "No URLs provided"}), 400
 
@@ -222,8 +258,8 @@ def resolve():
             "songs": [],
         }
 
-    thread = threading.Thread(target=resolve_job, args=(job_id, urls), daemon=True)
-    thread.start()
+    threading.Thread(target=resolve_job, args=(job_id, urls), daemon=True).start()
+
     return jsonify({"job_id": job_id})
 
 
@@ -237,15 +273,17 @@ def start():
         job = download_jobs.get(job_id)
         if not job:
             return jsonify({"error": "Job not found"}), 404
+
         for i, song in enumerate(job["songs"]):
             song["selected"] = i in selected_indices
-            if song["selected"] and song["status"] not in ("done",):
+            if song["selected"] and song["status"] != "done":
                 song["status"] = "queued"
                 song["progress"] = 0
+
         job["status"] = "downloading"
 
-    thread = threading.Thread(target=download_job, args=(job_id,), daemon=True)
-    thread.start()
+    threading.Thread(target=download_job, args=(job_id,), daemon=True).start()
+
     return jsonify({"ok": True})
 
 
@@ -253,8 +291,10 @@ def start():
 def status(job_id):
     with jobs_lock:
         job = download_jobs.get(job_id)
+
     if not job:
         return jsonify({"error": "Job not found"}), 404
+
     return jsonify(job)
 
 
@@ -276,6 +316,8 @@ def suppress_appspecific(filename):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     host = os.environ.get("HOST", "0.0.0.0")
+
     print("\n  Music Downloader is running!")
     print(f"  Open http://{host}:{port} in your browser\n")
+
     app.run(debug=False, host=host, port=port)
