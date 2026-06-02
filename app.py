@@ -18,22 +18,35 @@ COOKIES_FILE = os.environ.get("YTDLP_COOKIES_FILE")
 COOKIES_FROM_BROWSER = os.environ.get("YTDLP_COOKIES_FROM_BROWSER")
 COOKIES_CONTENT = os.environ.get("YTDLP_COOKIES_CONTENT")
 COOKIES_TEMP_FILE = None
+def _write_temp_cookie(content):
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8")
+    tmp.write(content)
+    tmp.close()
+    return tmp.name
 
+# If cookie contents were provided (preferred), write them to a temp file.
 if COOKIES_CONTENT and not COOKIES_FILE:
-    temp_cookie = tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8")
-    temp_cookie.write(COOKIES_CONTENT)
-    temp_cookie.close()
-    COOKIES_FILE = temp_cookie.name
-    COOKIES_TEMP_FILE = temp_cookie.name
+    COOKIES_FILE = _write_temp_cookie(COOKIES_CONTENT)
+    COOKIES_TEMP_FILE = COOKIES_FILE
 
-    def clean_temp_cookie():
-        try:
-            if COOKIES_TEMP_FILE and os.path.exists(COOKIES_TEMP_FILE):
-                os.unlink(COOKIES_TEMP_FILE)
-        except OSError:
-            pass
+# Handle the common mistake of pasting the cookie file contents into the
+# `YTDLP_COOKIES_FILE` env var (instead of a file path). If the value
+# doesn't point to an existing file but looks like Netscape cookie content,
+# write it to a temp file and use that.
+if COOKIES_FILE and not os.path.exists(COOKIES_FILE):
+    looks_like_content = ("\n" in COOKIES_FILE) or COOKIES_FILE.strip().startswith("# Netscape")
+    if looks_like_content:
+        COOKIES_TEMP_FILE = _write_temp_cookie(COOKIES_FILE)
+        COOKIES_FILE = COOKIES_TEMP_FILE
 
-    atexit.register(clean_temp_cookie)
+def clean_temp_cookie():
+    try:
+        if COOKIES_TEMP_FILE and os.path.exists(COOKIES_TEMP_FILE):
+            os.unlink(COOKIES_TEMP_FILE)
+    except OSError:
+        pass
+
+atexit.register(clean_temp_cookie)
 
 download_jobs = {}
 jobs_lock = threading.Lock()
