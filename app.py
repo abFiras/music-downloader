@@ -26,6 +26,7 @@ def _write_temp_cookie(content):
 
 # If cookie contents were provided (preferred), write them to a temp file.
 if COOKIES_CONTENT and not COOKIES_FILE:
+    print(f"[cookies] Using YTDLP_COOKIES_CONTENT ({len(COOKIES_CONTENT)} bytes)")
     COOKIES_FILE = _write_temp_cookie(COOKIES_CONTENT)
     COOKIES_TEMP_FILE = COOKIES_FILE
 
@@ -36,8 +37,14 @@ if COOKIES_CONTENT and not COOKIES_FILE:
 if COOKIES_FILE and not os.path.exists(COOKIES_FILE):
     looks_like_content = ("\n" in COOKIES_FILE) or COOKIES_FILE.strip().startswith("# Netscape")
     if looks_like_content:
+        print(f"[cookies] Detected cookie content in YTDLP_COOKIES_FILE env var ({len(COOKIES_FILE)} bytes), writing to temp file")
         COOKIES_TEMP_FILE = _write_temp_cookie(COOKIES_FILE)
         COOKIES_FILE = COOKIES_TEMP_FILE
+        print(f"[cookies] Temp cookie file: {COOKIES_FILE}")
+    else:
+        print(f"[cookies] YTDLP_COOKIES_FILE is not a valid path and doesn't look like cookie content")
+elif COOKIES_FILE:
+    print(f"[cookies] Using YTDLP_COOKIES_FILE: {COOKIES_FILE}")
 
 def clean_temp_cookie():
     try:
