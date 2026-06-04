@@ -19,19 +19,13 @@ os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 COOKIES_FILE           = os.environ.get("YTDLP_COOKIES_FILE")           # path to a .txt file
 COOKIES_FROM_BROWSER   = os.environ.get("YTDLP_COOKIES_FROM_BROWSER")   # e.g. "chrome"
 COOKIES_CONTENT        = os.environ.get("YTDLP_COOKIES_CONTENT")        # raw Netscape text
-COOKIES_CONTENT_B64    = os.environ.get("YTDLP_COOKIES_CONTENT_B64")    # ← NEW: base64-encoded (recommended for Render)
+COOKIES_CONTENT_B64    = os.environ.get("YTDLP_COOKIES_CONTENT_B64")    # base64-encoded (recommended for Render)
 COOKIES_TEMP_FILE      = None
 
 # ── Optional extras ───────────────────────────────────────────────────────────
-# Residential proxy — the most reliable fix for datacenter IP blocks.
-# Format: http://user:pass@host:port  or  socks5://user:pass@host:port
-PROXY_URL              = os.environ.get("YTDLP_PROXY")
-
-# PO Token — helps bypass bot-detection on server IPs when combined with cookies.
-# Obtain with: https://github.com/YunzheZJU/youtube-po-token-generator
-# Format for env var:  <po_token>   (just the token string)
-PO_TOKEN               = os.environ.get("YTDLP_PO_TOKEN")
-VISITOR_DATA           = os.environ.get("YTDLP_VISITOR_DATA")           # companion to PO_TOKEN
+PROXY_URL    = os.environ.get("YTDLP_PROXY")        # http://user:pass@host:port
+PO_TOKEN     = os.environ.get("YTDLP_PO_TOKEN")     # YouTube PO token
+VISITOR_DATA = os.environ.get("YTDLP_VISITOR_DATA") # companion to PO_TOKEN
 
 
 # ── Cookie bootstrap ──────────────────────────────────────────────────────────
@@ -43,7 +37,7 @@ def _write_temp_cookie(content: str) -> str:
     return tmp.name
 
 
-# 1. Prefer base64-encoded content (most reliable on Render — avoids multiline mangling)
+# 1. Prefer base64-encoded content (safest for Render — avoids multiline mangling)
 if COOKIES_CONTENT_B64 and not COOKIES_CONTENT and not COOKIES_FILE:
     try:
         decoded = base64.b64decode(COOKIES_CONTENT_B64).decode("utf-8")
@@ -62,17 +56,17 @@ if COOKIES_CONTENT and not COOKIES_FILE:
 if COOKIES_FILE and not os.path.exists(COOKIES_FILE):
     looks_like_content = ("\n" in COOKIES_FILE) or COOKIES_FILE.strip().startswith("# Netscape")
     if looks_like_content:
-        print("[cookies] Detected cookie content pasted into YTDLP_COOKIES_FILE — writing to temp file")
+        print("[cookies] Detected cookie content in YTDLP_COOKIES_FILE — writing to temp file")
         COOKIES_TEMP_FILE = _write_temp_cookie(COOKIES_FILE)
         COOKIES_FILE = COOKIES_TEMP_FILE
     else:
-        print(f"[cookies] Warning: YTDLP_COOKIES_FILE path does not exist: {COOKIES_FILE}")
+        print(f"[cookies] Warning: path does not exist: {COOKIES_FILE}")
         COOKIES_FILE = None
 elif COOKIES_FILE:
     print(f"[cookies] Using YTDLP_COOKIES_FILE: {COOKIES_FILE}")
 
 if PO_TOKEN:
-    print("[auth] PO token provided — will attach to youtube extractor args")
+    print("[auth] PO token provided")
 if PROXY_URL:
     print(f"[proxy] Using proxy: {PROXY_URL}")
 
@@ -104,16 +98,21 @@ def apply_common_opts(ydl_opts: dict) -> dict:
         ydl_opts["proxy"] = PROXY_URL
 
     # ── Player client strategy ────────────────────────────────────────────────
-    # `tv_embedded` bypasses the bot-check gate on datacenter IPs.
-    # `android` is the best source for full format lists (audio-only streams).
-    # `web` is the final safety net.
-    # Order matters: yt-dlp uses the first client that succeeds for auth,
-    # then merges format lists from all clients.
+    # Client order matters — yt-dlp uses the FIRST successful client for both
+    # auth and the format table. Wrong first client = bot-check OR no audio streams.
+    #
+    # `ios`         — bypasses most datacenter bot-checks AND exposes m4a audio-only
+    #                 streams (format 140). Best first choice on Render.
+    # `tv_embedded` — guaranteed no bot-check; but only has combined streams (18/22).
+    #                 Fallback if ios gets flagged.
+    # `android`     — full format access; sometimes bot-checked on server IPs.
+    # `web`         — full formats with cookies; most likely to hit the sign-in gate
+    #                 without a residential IP, so kept last.
     ydl_opts.setdefault("extractor_args", {})
     ydl_opts["extractor_args"].setdefault("youtube", {})
-    ydl_opts["extractor_args"]["youtube"]["player_client"] = ["tv_embedded", "android", "web"]
+    ydl_opts["extractor_args"]["youtube"]["player_client"] = ["ios", "tv_embedded", "android", "web"]
 
-    # PO Token — attach when provided (greatly helps on server IPs)
+    # PO Token — attach when provided (helps on server IPs)
     if PO_TOKEN:
         ydl_opts["extractor_args"]["youtube"]["po_token"] = [f"web+{PO_TOKEN}"]
     if VISITOR_DATA:
@@ -224,33 +223,67 @@ def resolve_job(job_id: str, urls: list):
         download_jobs[job_id]["status"]   = "ready"
 
 
-# Format preference: explicit codec/container fallbacks so yt-dlp always
-# finds something even when a client only exposes combined streams.
-#   m4a  → best for direct mp3 conversion (AAC → MP3 is lossless-ish)
-#   webm → Opus, still great quality
-#   bestaudio → whatever audio-only stream is available
-#   best  → last resort: combined video+audio (ffmpeg will still extract audio)
+# ── Format constants & download helper ───────────────────────────────────────
+
+# Format preference chain:
+#   m4a audio-only  → best for mp3 conversion (AAC → MP3 is near-lossless)
+#   webm audio-only → Opus, excellent quality
+#   bestaudio       → any audio-only stream
+#   best            → combined stream; ffmpeg will extract the audio track
 _FORMAT_PRIMARY  = "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best"
-_FORMAT_FALLBACK = "best"  # always available; ffmpeg extracts audio from it
+_FORMAT_FALLBACK = "best"   # always exists on any client; ffmpeg handles the rest
 
 
 def _attempt_download(ydl_opts: dict, url: str) -> None:
     """
-    Try the primary format. If yt-dlp says the format is unavailable
-    (which can happen when tv_embedded exposes a limited format list),
-    automatically retry with the broadest possible selector.
+    Three-pass download with automatic format/client fallback.
+
+    Pass 1 — preferred formats (m4a / webm audio-only, then combined best)
+              with the configured client list (ios → tv_embedded → android → web).
+    Pass 2 — absolute selector 'best' with the same clients.
+              Catches the case where ios/tv_embedded return a limited format table
+              that has combined streams but nothing matching 'bestaudio'.
+    Pass 3 — 'best' forced through web+android only.
+              Last resort for region-locked or age-restricted videos where the
+              ios/tv_embedded table comes back empty.
+
+    We catch plain Exception (not just DownloadError) because yt-dlp can raise
+    ExtractorError or even a bare ValueError from its format-selector code path
+    depending on the installed version.
     """
+    _NO_FORMAT = "Requested format is not available"
+
+    # ── Pass 1: preferred format chain ────────────────────────────────────
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
-    except yt_dlp.utils.DownloadError as exc:
-        if "Requested format is not available" in str(exc):
-            print(f"[format] Primary format unavailable for {url!r}, retrying with '{_FORMAT_FALLBACK}'")
-            fallback_opts = {**ydl_opts, "format": _FORMAT_FALLBACK}
-            with yt_dlp.YoutubeDL(fallback_opts) as ydl:
-                ydl.download([url])
-        else:
+        return
+    except Exception as exc:
+        if _NO_FORMAT not in str(exc):
+            raise                   # real error (network, auth, etc.) — surface it
+        print(f"[format] pass-1 format unavailable for {url!r} — retrying with 'best'")
+
+    # ── Pass 2: 'best' with same clients ─────────────────────────────────
+    try:
+        opts2 = {**ydl_opts, "format": _FORMAT_FALLBACK}
+        with yt_dlp.YoutubeDL(opts2) as ydl:
+            ydl.download([url])
+        return
+    except Exception as exc:
+        if _NO_FORMAT not in str(exc):
             raise
+        print(f"[format] pass-2 still unavailable — switching to web+android clients")
+
+    # ── Pass 3: web+android clients, 'best' ───────────────────────────────
+    web_ea: dict = {"youtube": {"player_client": ["web", "android"]}}
+    if PO_TOKEN:
+        web_ea["youtube"]["po_token"] = [f"web+{PO_TOKEN}"]
+    if VISITOR_DATA:
+        web_ea["youtube"]["visitor_data"] = [VISITOR_DATA]
+
+    opts3 = {**ydl_opts, "format": _FORMAT_FALLBACK, "extractor_args": web_ea}
+    with yt_dlp.YoutubeDL(opts3) as ydl:
+        ydl.download([url])
 
 
 def download_job(job_id: str):
@@ -294,9 +327,9 @@ def download_job(job_id: str):
             _attempt_download(ydl_opts, song["url"])
 
             with jobs_lock:
-                download_jobs[job_id]["songs"][i]["status"]   = "done"
-                download_jobs[job_id]["songs"][i]["progress"]  = 100
-                download_jobs[job_id]["songs"][i]["folder"]    = artist
+                download_jobs[job_id]["songs"][i]["status"]  = "done"
+                download_jobs[job_id]["songs"][i]["progress"] = 100
+                download_jobs[job_id]["songs"][i]["folder"]   = artist
 
         except Exception as e:
             with jobs_lock:
