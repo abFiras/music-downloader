@@ -5,6 +5,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 from flask import Flask, render_template, request, jsonify
 import yt_dlp
 
@@ -15,26 +16,25 @@ app.jinja_env.auto_reload = True
 DOWNLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "downloads")
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
-# ── Cookie sources (checked in priority order) ────────────────────────────────
-COOKIES_FILE           = os.environ.get("YTDLP_COOKIES_FILE")
-COOKIES_FROM_BROWSER   = os.environ.get("YTDLP_COOKIES_FROM_BROWSER")
-COOKIES_CONTENT        = os.environ.get("YTDLP_COOKIES_CONTENT")
-COOKIES_CONTENT_B64    = os.environ.get("YTDLP_COOKIES_CONTENT_B64")
-COOKIES_TEMP_FILE      = None
+# ── Cookie sources ─────────────────────────────────────────────────────────────
+COOKIES_FILE         = os.environ.get("YTDLP_COOKIES_FILE")
+COOKIES_FROM_BROWSER = os.environ.get("YTDLP_COOKIES_FROM_BROWSER")
+COOKIES_CONTENT      = os.environ.get("YTDLP_COOKIES_CONTENT")
+COOKIES_CONTENT_B64  = os.environ.get("YTDLP_COOKIES_CONTENT_B64")
+COOKIES_TEMP_FILE    = None
 
-# ── Optional extras ───────────────────────────────────────────────────────────
-PROXY_URL    = os.environ.get("YTDLP_PROXY")
+# ── PO Token & Visitor Data (CRITICAL for server IPs) ───────────────────────
 PO_TOKEN     = os.environ.get("YTDLP_PO_TOKEN")
 VISITOR_DATA = os.environ.get("YTDLP_VISITOR_DATA")
 
-# ── NEW: Anti-bot configuration ───────────────────────────────────────────────
-# YouTube aggressively blocks datacenter IPs. These settings help bypass that.
-USER_AGENT   = os.environ.get("YTDLP_USER_AGENT", 
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-REFERER      = os.environ.get("YTDLP_REFERER", "https://www.youtube.com/")
-# Sleep between requests to mimic human behavior
-MIN_SLEEP    = float(os.environ.get("YTDLP_MIN_SLEEP", "2"))
-MAX_SLEEP    = float(os.environ.get("YTDLP_MAX_SLEEP", "5"))
+# ── Proxy (HIGHLY RECOMMENDED for Render/datacenter IPs) ────────────────────
+PROXY_URL = os.environ.get("YTDLP_PROXY")
+
+# ── Sleep intervals (REQUIRED to avoid rate limits) ──────────────────────────
+# YouTube rate limit: ~300 videos/hour for guest, ~2000 for accounts
+# With sleep 5-10s, you stay well under the limit
+MIN_SLEEP = int(os.environ.get("YTDLP_MIN_SLEEP", "5"))
+MAX_SLEEP = int(os.environ.get("YTDLP_MAX_SLEEP", "10"))
 
 
 # ── Cookie bootstrap ──────────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ def _write_temp_cookie(content: str) -> str:
     tmp.close()
     return tmp.name
 
-# 1. Prefer base64-encoded content (safest for Render)
+# 1. Base64-encoded content (safest for Render)
 if COOKIES_CONTENT_B64 and not COOKIES_CONTENT and not COOKIES_FILE:
     try:
         decoded = base64.b64decode(COOKIES_CONTENT_B64).decode("utf-8")
@@ -54,13 +54,13 @@ if COOKIES_CONTENT_B64 and not COOKIES_CONTENT and not COOKIES_FILE:
     except Exception as e:
         print(f"[cookies] Failed to decode YTDLP_COOKIES_CONTENT_B64: {e}")
 
-# 2. Raw content string → write to temp file
+# 2. Raw content → temp file
 if COOKIES_CONTENT and not COOKIES_FILE:
     print(f"[cookies] Using YTDLP_COOKIES_CONTENT ({len(COOKIES_CONTENT)} bytes)")
     COOKIES_FILE = _write_temp_cookie(COOKIES_CONTENT)
     COOKIES_TEMP_FILE = COOKIES_FILE
 
-# 3. COOKIES_FILE is a path — but sometimes people paste the content there by mistake
+# 3. Handle path vs content confusion
 if COOKIES_FILE and not os.path.exists(COOKIES_FILE):
     looks_like_content = ("\n" in COOKIES_FILE) or COOKIES_FILE.strip().startswith("# Netscape")
     if looks_like_content:
@@ -74,9 +74,13 @@ elif COOKIES_FILE:
     print(f"[cookies] Using YTDLP_COOKIES_FILE: {COOKIES_FILE}")
 
 if PO_TOKEN:
-    print("[auth] PO token provided")
+    print(f"[auth] PO Token provided")
+if VISITOR_DATA:
+    print(f"[auth] Visitor Data provided")
 if PROXY_URL:
     print(f"[proxy] Using proxy: {PROXY_URL}")
+else:
+    print("[warning] No proxy configured — datacenter IPs are frequently blocked by YouTube")
 
 
 def clean_temp_cookie():
@@ -92,7 +96,7 @@ atexit.register(clean_temp_cookie)
 # ── Central yt-dlp options builder ────────────────────────────────────────────
 
 def apply_common_opts(ydl_opts: dict) -> dict:
-    """Attach cookies, proxy, anti-bot args, and client strategy."""
+    """Attach cookies, proxy, PO token, and anti-bot configuration."""
 
     # Cookies
     if COOKIES_FILE and os.path.exists(COOKIES_FILE):
@@ -104,55 +108,62 @@ def apply_common_opts(ydl_opts: dict) -> dict:
     if PROXY_URL:
         ydl_opts["proxy"] = PROXY_URL
 
-    # ── NEW: Anti-bot headers ─────────────────────────────────────────────────
-    # Spoof a real browser to avoid bot detection
-    ydl_opts.setdefault("headers", {})
-    ydl_opts["headers"]["User-Agent"] = USER_AGENT
-    ydl_opts["headers"]["Referer"] = REFERER
-    ydl_opts["headers"]["Accept-Language"] = "en-US,en;q=0.9"
-    
-    # ── NEW: Sleep intervals to mimic human behavior ─────────────────────────
-    # Critical for server IPs - prevents rate limiting
+    # ── CRITICAL: Sleep intervals to avoid rate limits ─────────────────────
+    # The wiki explicitly states: "add a delay of around 5-10 seconds between downloads"
     ydl_opts.setdefault("sleep_interval", MIN_SLEEP)
     ydl_opts.setdefault("max_sleep_interval", MAX_SLEEP)
-    ydl_opts.setdefault("sleep_interval_requests", 1)
+    ydl_opts.setdefault("sleep_interval_requests", 5)
 
-    # ── Player client strategy ────────────────────────────────────────────────
-    # CRITICAL FIX for server IPs:
-    # `tv_embedded` has NO bot-check and works on blocked IPs, but limited formats.
-    # `ios` bypasses most bot-checks and exposes m4a audio (format 140).
-    # `android` and `web` are fallbacks.
+    # ── CRITICAL: Client strategy for blocked IPs ──────────────────────────
     # 
-    # For Render/datacenter IPs, tv_embedded is the most reliable.
+    # For datacenter IPs (Render, AWS, etc.), the recommended approach is:
+    # 1. mweb client with PO Token (official yt-dlp recommendation)
+    # 2. tv_embedded — no bot-check, guaranteed to work but limited formats
+    # 3. ios — good audio streams, bypasses most bot checks
+    #
+    # WARNING: Do NOT use "web" client on server IPs — it will hit the bot check
     ydl_opts.setdefault("extractor_args", {})
     ydl_opts["extractor_args"].setdefault("youtube", {})
-    
-    # NEW: Prioritize tv_embedded first for blocked IPs, then ios
-    ydl_opts["extractor_args"]["youtube"]["player_client"] = [
-        "tv_embedded",   # No bot-check, guaranteed to work on blocked IPs
-        "ios",           # Good audio-only streams, bypasses most bot checks
-        "android",       # Full formats, sometimes bot-checked
-        "web"            # Last resort - most likely to hit sign-in gate
-    ]
-    
-    # NEW: Also try web_safari as an alternative client
-    # yt-dlp community found this bypasses some bot checks citeweb_search:1#1
-    ydl_opts["extractor_args"]["youtube"].setdefault("player_client", [])
-    if "web_safari" not in ydl_opts["extractor_args"]["youtube"]["player_client"]:
-        ydl_opts["extractor_args"]["youtube"]["player_client"].append("web_safari")
 
-    # PO Token — helps on server IPs when combined with cookies
+    # Priority: mweb (with PO token) > tv_embedded > ios
+    # mweb is the officially recommended client for PO token usage
+    clients = []
+    
     if PO_TOKEN:
+        # mweb + PO token is the officially supported combination
+        clients.append("mweb")
+    
+    # tv_embedded has NO bot-check — essential for server IPs
+    clients.append("tv_embedded")
+    
+    # ios bypasses most bot-checks and exposes audio-only streams
+    clients.append("ios")
+    
+    # android as final fallback
+    clients.append("android")
+
+    ydl_opts["extractor_args"]["youtube"]["player_client"] = clients
+
+    # PO Token — attach when provided (required for mweb client)
+    if PO_TOKEN:
+        # Format: "web+PO_TOKEN" or "mweb+PO_TOKEN" depending on client
         ydl_opts["extractor_args"]["youtube"]["po_token"] = [f"web+{PO_TOKEN}"]
+    
+    # Visitor Data — companion to PO token
     if VISITOR_DATA:
         ydl_opts["extractor_args"]["youtube"]["visitor_data"] = [VISITOR_DATA]
+
+    # ── Skip webpage to avoid cookie rotation issues ───────────────────────
+    # The wiki recommends skipping webpage requests when using visitor data
+    # to avoid VISITOR_INFO1_LIVE cookie interference
+    if VISITOR_DATA and not (COOKIES_FILE or COOKIES_FROM_BROWSER):
+        ydl_opts["extractor_args"]["youtube"].setdefault("player_skip", [])
+        ydl_opts["extractor_args"]["youtube"]["player_skip"].append("webpage")
 
     # Safer networking
     ydl_opts.setdefault("retries", 5)
     ydl_opts.setdefault("socket_timeout", 30)
-    
-    # NEW: Force IPv4 to avoid potential IPv6 blocks
-    ydl_opts.setdefault("source_address", "0.0.0.0")
+    ydl_opts.setdefault("fragment_retries", 5)
 
     return ydl_opts
 
@@ -206,7 +217,7 @@ def resolve_job(job_id: str, urls: list):
         try:
             ydl_opts = apply_common_opts({
                 "quiet": True,
-                "extractor_flat": True,
+                "extract_flat": True,
                 "skip_download": True,
             })
 
@@ -257,37 +268,39 @@ def resolve_job(job_id: str, urls: list):
 
 # ── Format constants & download helper ───────────────────────────────────────
 
-# UPDATED: For blocked IPs, prefer combined formats that don't need separate streams
-# tv_embedded only provides combined streams (18/22), so we must handle that
+# Format preference:
+#   m4a audio-only → best for mp3 conversion (AAC → MP3 is near-lossless)
+#   webm audio-only → Opus, excellent quality
+#   bestaudio → any audio-only stream
+#   best → combined stream; ffmpeg will extract audio track
 _FORMAT_PRIMARY  = "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best"
-_FORMAT_FALLBACK = "best"   # Combined stream - most reliable on blocked IPs
+_FORMAT_FALLBACK = "best"
 
 
 def _attempt_download(ydl_opts: dict, url: str) -> None:
     """
     Three-pass download with automatic format/client fallback.
     
-    UPDATED for Render/datacenter IPs:
-    - Pass 1: Try with current client list (tv_embedded first)
-    - Pass 2: Force 'best' combined format (avoids separate stream 403s)
-    - Pass 3: Fallback to web+android with 'best'
+    Pass 1: Preferred audio formats with configured clients (mweb/tv_embedded/ios)
+    Pass 2: 'best' combined format with same clients
+    Pass 3: 'best' with web+android clients (last resort)
     """
     _NO_FORMAT = "Requested format is not available"
     _BOT_ERROR = "Sign in to confirm you're not a bot"
+    _RATE_LIMIT = "This content isn't available, try again later"
 
-    # ── Pass 1: preferred format chain with anti-bot clients ─────────────────
+    # ── Pass 1: preferred format chain ────────────────────────────────────
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
         return
     except Exception as exc:
         err_str = str(exc)
-        if _NO_FORMAT not in err_str and _BOT_ERROR not in err_str:
-            raise  # Real error (network, auth, etc.)
-        print(f"[format] pass-1 failed for {url!r}: {err_str[:100]}... retrying")
+        if _NO_FORMAT not in err_str and _BOT_ERROR not in err_str and _RATE_LIMIT not in err_str:
+            raise
+        print(f"[format] pass-1 failed for {url!r}: {err_str[:120]}... retrying")
 
-    # ── Pass 2: 'best' combined format with same clients ────────────────────
-    # Combined formats avoid separate stream 403s that trigger bot detection
+    # ── Pass 2: 'best' with same clients ─────────────────────────────────
     try:
         opts2 = {**ydl_opts, "format": _FORMAT_FALLBACK}
         with yt_dlp.YoutubeDL(opts2) as ydl:
@@ -295,11 +308,11 @@ def _attempt_download(ydl_opts: dict, url: str) -> None:
         return
     except Exception as exc:
         err_str = str(exc)
-        if _NO_FORMAT not in err_str and _BOT_ERROR not in err_str:
+        if _NO_FORMAT not in err_str and _BOT_ERROR not in err_str and _RATE_LIMIT not in err_str:
             raise
         print(f"[format] pass-2 failed — switching to web+android clients")
 
-    # ── Pass 3: web+android clients with 'best' ─────────────────────────────
+    # ── Pass 3: web+android clients, 'best' ─────────────────────────────
     web_ea: dict = {"youtube": {"player_client": ["web", "android"]}}
     if PO_TOKEN:
         web_ea["youtube"]["po_token"] = [f"web+{PO_TOKEN}"]
