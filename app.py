@@ -20,14 +20,9 @@ app = Flask(
     static_url_path="/images",
     template_folder=os.path.join(_ROOT, "templates"),
 )
-_is_serverless = bool(
-    os.environ.get("VERCEL")
-    or os.environ.get("VERCEL_ENV")
-    or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
-)
 _is_render = bool(os.environ.get("RENDER"))
-app.config["TEMPLATES_AUTO_RELOAD"] = not _is_serverless
-app.jinja_env.auto_reload = not _is_serverless
+app.config["TEMPLATES_AUTO_RELOAD"] = not _is_render
+app.jinja_env.auto_reload = not _is_render
 
 
 def _is_writable_dir(path: str) -> bool:
@@ -47,9 +42,7 @@ def _init_download_folder() -> str:
     local = os.path.join(_ROOT, "downloads")
     tmp = os.path.join(tempfile.gettempdir(), "downloads")
     if override:
-        candidates = [override, tmp, local]
-    elif _is_serverless:
-        candidates = [tmp, local]
+        candidates = [override, local, tmp]
     else:
         candidates = [local, tmp]
     seen: set[str] = set()
@@ -133,6 +126,9 @@ if PROXY_URL:
 else:
     print("[warning] No proxy configured — datacenter IPs are frequently blocked by YouTube")
 
+_HAS_FFMPEG = bool(shutil.which("ffmpeg") or shutil.which("ffmpeg.exe"))
+print(f"[startup] render={_is_render} ffmpeg={_HAS_FFMPEG} downloads={DOWNLOAD_FOLDER}")
+
 
 def clean_temp_cookie():
     try:
@@ -146,7 +142,7 @@ atexit.register(clean_temp_cookie)
 
 # ── Central yt-dlp options builder ────────────────────────────────────────────
 
-def apply_common_opts(ydl_opts: dict) -> dict:
+def apply_common_opts(ydl_opts: dict, *, lightweight: bool = False) -> dict:
     """Attach cookies, proxy, PO token, and anti-bot configuration."""
 
     # Cookies
@@ -159,20 +155,11 @@ def apply_common_opts(ydl_opts: dict) -> dict:
     if PROXY_URL:
         ydl_opts["proxy"] = PROXY_URL
 
-    # ── CRITICAL: Sleep intervals to avoid rate limits ─────────────────────
-    # The wiki explicitly states: "add a delay of around 5-10 seconds between downloads"
-    ydl_opts.setdefault("sleep_interval", MIN_SLEEP)
-    ydl_opts.setdefault("max_sleep_interval", MAX_SLEEP)
-    ydl_opts.setdefault("sleep_interval_requests", 5)
-
-    # ── CRITICAL: Client strategy for blocked IPs ──────────────────────────
-    # 
-    # For datacenter IPs (Render, AWS, etc.), the recommended approach is:
-    # 1. mweb client with PO Token (official yt-dlp recommendation)
-    # 2. tv_embedded — no bot-check, guaranteed to work but limited formats
-    # 3. ios — good audio streams, bypasses most bot checks
-    #
-    # WARNING: Do NOT use "web" client on server IPs — it will hit the bot check
+    if not lightweight:
+        ydl_opts.setdefault("sleep_interval", MIN_SLEEP)
+        ydl_opts.setdefault("max_sleep_interval", MAX_SLEEP)
+        ydl_opts.setdefault("sleep_interval_requests", 5)
+    # Client strategy for datacenter IPs (Render, etc.)
     ydl_opts.setdefault("extractor_args", {})
     ydl_opts["extractor_args"].setdefault("youtube", {})
 
@@ -226,8 +213,6 @@ jobs_lock = threading.Lock()
 
 
 def _save_job(job_id: str, job: dict) -> None:
-    if _is_serverless:
-        return
     try:
         os.makedirs(JOBS_DIR, exist_ok=True)
         path = os.path.join(JOBS_DIR, f"{job_id}.json")
@@ -321,7 +306,7 @@ def _resolve_urls(urls: list) -> list:
                 "quiet": True,
                 "extract_flat": True,
                 "skip_download": True,
-            })
+            }, lightweight=True)
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -437,18 +422,22 @@ def _attempt_download(ydl_opts: dict, url: str) -> None:
         ydl.download([url])
 
 
-def _download_songs(songs: list) -> None:
+def _download_songs(songs: list, job_id: str | None = None) -> None:
     for i, song in enumerate(songs):
         if not song.get("selected", True) or song.get("status") in ("done", "error"):
             continue
 
         song["status"] = "downloading"
+        if job_id:
+            with jobs_lock:
+                if job_id in download_jobs:
+                    _save_job(job_id, download_jobs[job_id])
 
         artist        = sanitize(song.get("artist", "Unknown Artist"))
         artist_folder = os.path.join(DOWNLOAD_FOLDER, artist)
         os.makedirs(artist_folder, exist_ok=True)
 
-        has_ffmpeg = bool(shutil.which("ffmpeg") or shutil.which("ffmpeg.exe"))
+        has_ffmpeg = _HAS_FFMPEG
 
         ydl_opts = apply_common_opts({
             "format":      _FORMAT_PRIMARY,
@@ -478,12 +467,17 @@ def _download_songs(songs: list) -> None:
             song["status"] = "error"
             song["error"]  = str(e)
 
+        if job_id:
+            with jobs_lock:
+                if job_id in download_jobs:
+                    _save_job(job_id, download_jobs[job_id])
+
 
 def download_job(job_id: str):
     with jobs_lock:
         songs = download_jobs[job_id]["songs"]
 
-    _download_songs(songs)
+    _download_songs(songs, job_id)
 
     with jobs_lock:
         download_jobs[job_id]["status"] = "done"
@@ -497,9 +491,8 @@ def health():
     return jsonify({
         "ok": True,
         "download_folder": DOWNLOAD_FOLDER,
-        "serverless": _is_serverless,
         "render": _is_render,
-        "recommended_host": "render" if not _is_serverless else "local-or-render",
+        "ffmpeg": _HAS_FFMPEG,
     })
 
 
@@ -518,15 +511,6 @@ def resolve():
 
     job_id = str(uuid.uuid4())
 
-    if _is_serverless:
-        songs = _resolve_urls(urls)
-        return jsonify({
-            "job_id": job_id,
-            "resolved": True,
-            "status": "ready",
-            "songs": songs,
-        })
-
     with jobs_lock:
         download_jobs[job_id] = {
             "status":   "resolving",
@@ -544,23 +528,6 @@ def start():
     data = request.get_json()
     job_id           = data.get("job_id")
     selected_indices = data.get("selected", [])
-    client_songs     = data.get("songs")
-
-    if _is_serverless:
-        if not client_songs:
-            return jsonify({"error": "No songs provided"}), 400
-
-        songs = json.loads(json.dumps(client_songs))
-        for i, song in enumerate(songs):
-            song["selected"] = i in selected_indices
-            if song["selected"] and song.get("status") != "done":
-                song["status"]   = "queued"
-                song["progress"] = 0
-
-        job = {"status": "downloading", "resolved": True, "songs": songs}
-        _download_songs(songs)
-        job["status"] = "done"
-        return jsonify({**job, "ok": True})
 
     with jobs_lock:
         job = download_jobs.get(job_id)

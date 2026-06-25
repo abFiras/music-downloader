@@ -1,0 +1,11 @@
+.venv
+venv
+__pycache__
+*.pyc
+.git
+.vercel
+.env
+downloads
+.jobs
+cookies.txt
+test_cookie_patch.py

@@ -314,16 +314,16 @@
   </div>
 
   <script>
-    function showDone(jobId, canDownloadZip, isServerlessHost) {
+    function showDone(jobId, isRemote, hasFiles) {
       const zipBtn = document.getElementById("zipBtn");
       const doneMessage = document.getElementById("doneMessage");
-      if (canDownloadZip && jobId) {
+      if (isRemote && hasFiles && jobId) {
         zipBtn.href = "/download-zip/" + jobId;
         zipBtn.style.display = "inline-flex";
-        doneMessage.innerHTML = "Your batch is ready. Download the ZIP to save the files on your device.";
-      } else if (isServerlessHost) {
+        doneMessage.innerHTML = "Your batch is ready. Click <strong>Download ZIP</strong> to save the files on your device.";
+      } else if (isRemote) {
         zipBtn.style.display = "none";
-        doneMessage.innerHTML = "Batch finished on the server. Vercel cannot deliver files reliably — use your Render URL or run locally for real downloads.";
+        doneMessage.innerHTML = "Batch finished. If downloads failed, YouTube may be blocking the server — try again or run locally.";
       } else {
         zipBtn.style.display = "none";
         doneMessage.innerHTML = "MP3s organized in <code id=\"downloadPath\">" + (document.getElementById("downloadPath").textContent || "downloads/") + "</code>";
@@ -331,17 +331,14 @@
       document.getElementById("doneBanner").classList.add("visible");
     }
 
-    async function detectHostMode() {
+    async function isRemoteHost() {
       try {
         const res = await fetch("/health");
-        if (!res.ok) return { remote: isServerlessMode, serverless: isServerlessMode };
+        if (!res.ok) return false;
         const data = await res.json();
-        return {
-          remote: Boolean(data.render || data.serverless),
-          serverless: Boolean(data.serverless),
-        };
+        return Boolean(data.render);
       } catch {
-        return { remote: isServerlessMode, serverless: isServerlessMode };
+        return false;
       }
     }
 
@@ -350,7 +347,6 @@
     let pollInterval = null;
     let resolvedSongs = [];
     let currentPage = 1;
-    let isServerlessMode = false;
 
     function finishResolve(songs) {
       hideLoading();
@@ -392,13 +388,7 @@
         }
         const data = await res.json();
         currentJobId = data.job_id;
-        if (data.resolved && data.songs) {
-          isServerlessMode = true;
-          finishResolve(data.songs);
-        } else {
-          isServerlessMode = false;
-          pollInterval = setInterval(pollResolve, 700);
-        }
+        pollInterval = setInterval(pollResolve, 700);
       } catch (err) {
         showMessage("error", err.message || "Failed to resolve URLs. Try again.");
         hideLoading();
@@ -581,32 +571,14 @@
         const startRes = await fetch("/start", {
           method: "POST",
           headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({
-            job_id: currentJobId,
-            selected: selectedIndices,
-            songs: isServerlessMode ? resolvedSongs : undefined
-          })
+          body: JSON.stringify({job_id: currentJobId, selected: selectedIndices})
         });
         if (!startRes.ok) {
           const body = await startRes.text();
           throw new Error(body || "Unable to start download.");
         }
 
-        if (isServerlessMode) {
-          const job = await startRes.json();
-          const songs = job.songs || [];
-          renderQueue(songs);
-          const sel = songs.filter(s => s.selected);
-          const done = sel.filter(s => s.status === "done").length;
-          const total = sel.length;
-          updateLoadingText("Downloading", done + " of " + total + " complete");
-          updateLoadingProgress(total ? Math.round((done / total) * 100) : 0);
-          document.getElementById("queueStats").textContent = done + " / " + total + " complete";
-          hideLoading();
-          await showDoneWhenFinished(job);
-        } else {
-          pollInterval = setInterval(pollDownload, 700);
-        }
+        pollInterval = setInterval(pollDownload, 700);
       } catch (err) {
         showMessage("error", err.message || "Download failed to start.");
         hideLoading();
@@ -615,13 +587,9 @@
     }
 
     async function showDoneWhenFinished(job) {
-      const host = await detectHostMode();
+      const remote = await isRemoteHost();
       const hasFiles = (job.songs || []).some(s => s.selected && s.status === "done" && s.file);
-      showDone(
-        currentJobId,
-        host.remote && !host.serverless && hasFiles,
-        host.serverless
-      );
+      showDone(currentJobId, remote, hasFiles);
     }
 
     async function pollDownload() {
@@ -717,7 +685,7 @@
     function escHtml(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
     function resetApp() {
-      currentJobId = null; clearInterval(pollInterval); resolvedSongs = []; currentPage = 1; isServerlessMode = false;
+      currentJobId = null; clearInterval(pollInterval); resolvedSongs = []; currentPage = 1;
       document.getElementById("urlInput").value = "https://www.youtube.com/watch?v=Tm8LGxTLtQk";
       document.getElementById("resolveBtn").disabled = false;
       document.getElementById("selectionPanel").classList.remove("visible");
