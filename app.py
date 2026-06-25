@@ -13,7 +13,17 @@ app = Flask(__name__, static_folder="images", static_url_path="/images")
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.jinja_env.auto_reload = True
 
-DOWNLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "downloads")
+def _default_download_folder() -> str:
+    override = os.environ.get("DOWNLOAD_FOLDER")
+    if override:
+        return override
+    # Vercel/Lambda: /var/task is read-only; only /tmp is writable
+    if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+        return os.path.join(tempfile.gettempdir(), "downloads")
+    return os.path.join(os.path.dirname(__file__), "downloads")
+
+
+DOWNLOAD_FOLDER = _default_download_folder()
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 # ── Cookie sources ─────────────────────────────────────────────────────────────
