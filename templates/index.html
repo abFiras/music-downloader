@@ -85,7 +85,8 @@
     .done-text h3{font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:2px;color:var(--done)}
     .done-text p{font-size:13px;color:var(--muted);margin-top:4px}
     .done-text code{font-family:'DM Mono',monospace;color:var(--accent-soft);font-size:12px}
-    .btn-new{margin-left:auto;padding:12px 22px;background:transparent;border:1px solid var(--done);color:var(--done);border-radius:999px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:1px;cursor:pointer;transition:all .15s}
+    .done-actions{display:flex;gap:12px;margin-left:auto;flex-wrap:wrap;align-items:center}
+    .btn-new{padding:12px 22px;background:transparent;border:1px solid var(--done);color:var(--done);border-radius:999px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:1px;cursor:pointer;transition:all .15s}
     .btn-new:hover{background:rgba(77,255,145,.1)}
     .queue-header{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center}
     .queue-stats{color:var(--accent)}
@@ -290,9 +291,12 @@
       <div class="done-icon">🎵</div>
       <div class="done-text">
         <h3>ALL DONE!</h3>
-        <p>MP3s organized in <code id="downloadPath">downloads/</code></p>
+        <p id="doneMessage">MP3s organized in <code id="downloadPath">downloads/</code></p>
       </div>
-      <button class="btn-new" onclick="resetApp()">+ NEW BATCH</button>
+      <div class="done-actions">
+        <a class="btn btn-primary" id="zipBtn" href="#" style="display:none">Download ZIP</a>
+        <button class="btn-new" onclick="resetApp()">+ NEW BATCH</button>
+      </div>
     </div>
 
     <footer class="site-footer">
@@ -310,6 +314,37 @@
   </div>
 
   <script>
+    function showDone(jobId, canDownloadZip, isServerlessHost) {
+      const zipBtn = document.getElementById("zipBtn");
+      const doneMessage = document.getElementById("doneMessage");
+      if (canDownloadZip && jobId) {
+        zipBtn.href = "/download-zip/" + jobId;
+        zipBtn.style.display = "inline-flex";
+        doneMessage.innerHTML = "Your batch is ready. Download the ZIP to save the files on your device.";
+      } else if (isServerlessHost) {
+        zipBtn.style.display = "none";
+        doneMessage.innerHTML = "Batch finished on the server. Vercel cannot deliver files reliably — use your Render URL or run locally for real downloads.";
+      } else {
+        zipBtn.style.display = "none";
+        doneMessage.innerHTML = "MP3s organized in <code id=\"downloadPath\">" + (document.getElementById("downloadPath").textContent || "downloads/") + "</code>";
+      }
+      document.getElementById("doneBanner").classList.add("visible");
+    }
+
+    async function detectHostMode() {
+      try {
+        const res = await fetch("/health");
+        if (!res.ok) return { remote: isServerlessMode, serverless: isServerlessMode };
+        const data = await res.json();
+        return {
+          remote: Boolean(data.render || data.serverless),
+          serverless: Boolean(data.serverless),
+        };
+      } catch {
+        return { remote: isServerlessMode, serverless: isServerlessMode };
+      }
+    }
+
     const PER_PAGE = 10;
     let currentJobId = null;
     let pollInterval = null;
@@ -568,7 +603,7 @@
           updateLoadingProgress(total ? Math.round((done / total) * 100) : 0);
           document.getElementById("queueStats").textContent = done + " / " + total + " complete";
           hideLoading();
-          document.getElementById("doneBanner").classList.add("visible");
+          await showDoneWhenFinished(job);
         } else {
           pollInterval = setInterval(pollDownload, 700);
         }
@@ -577,6 +612,16 @@
         hideLoading();
         document.getElementById("queueSection").classList.remove("visible");
       }
+    }
+
+    async function showDoneWhenFinished(job) {
+      const host = await detectHostMode();
+      const hasFiles = (job.songs || []).some(s => s.selected && s.status === "done" && s.file);
+      showDone(
+        currentJobId,
+        host.remote && !host.serverless && hasFiles,
+        host.serverless
+      );
     }
 
     async function pollDownload() {
@@ -599,7 +644,7 @@
         if (job.status === "done") {
           clearInterval(pollInterval);
           hideLoading();
-          document.getElementById("doneBanner").classList.add("visible");
+          await showDoneWhenFinished(job);
         }
       } catch (err) {
         clearInterval(pollInterval);
@@ -678,6 +723,7 @@
       document.getElementById("selectionPanel").classList.remove("visible");
       document.getElementById("queueSection").classList.remove("visible");
       document.getElementById("doneBanner").classList.remove("visible");
+      document.getElementById("zipBtn").style.display = "none";
       document.getElementById("songPickerList").innerHTML = "";
       document.getElementById("songList").innerHTML = "";
       document.getElementById("pagination").innerHTML = "";

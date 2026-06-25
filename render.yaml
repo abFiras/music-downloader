@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: batchbeat
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 600 --graceful-timeout 30
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.20"
+      # Optional — set in Render dashboard (do not commit secrets):
+      # YTDLP_COOKIES_CONTENT_B64
+      # YTDLP_PO_TOKEN
+      # YTDLP_VISITOR_DATA
+      # YTDLP_PROXY

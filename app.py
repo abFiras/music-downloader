@@ -1,5 +1,6 @@
 import atexit
 import base64
+import glob
 import json
 import os
 import re
@@ -8,7 +9,8 @@ import tempfile
 import threading
 import time
 import uuid
-from flask import Flask, render_template, request, jsonify
+import zipfile
+from flask import Flask, render_template, request, jsonify, send_file
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -23,6 +25,7 @@ _is_serverless = bool(
     or os.environ.get("VERCEL_ENV")
     or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
 )
+_is_render = bool(os.environ.get("RENDER"))
 app.config["TEMPLATES_AUTO_RELOAD"] = not _is_serverless
 app.jinja_env.auto_reload = not _is_serverless
 
@@ -62,6 +65,7 @@ def _init_download_folder() -> str:
 
 
 DOWNLOAD_FOLDER = _init_download_folder()
+JOBS_DIR = os.path.join(DOWNLOAD_FOLDER, ".jobs")
 
 # ── Cookie sources ─────────────────────────────────────────────────────────────
 COOKIES_FILE         = os.environ.get("YTDLP_COOKIES_FILE")
@@ -221,8 +225,63 @@ download_jobs = {}
 jobs_lock = threading.Lock()
 
 
+def _save_job(job_id: str, job: dict) -> None:
+    if _is_serverless:
+        return
+    try:
+        os.makedirs(JOBS_DIR, exist_ok=True)
+        path = os.path.join(JOBS_DIR, f"{job_id}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(job, f)
+    except OSError as exc:
+        print(f"[jobs] Failed to persist job {job_id}: {exc}")
+
+
+def _load_job(job_id: str) -> dict | None:
+    path = os.path.join(JOBS_DIR, f"{job_id}.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[jobs] Failed to load job {job_id}: {exc}")
+        return None
+
+
+def _get_job(job_id: str) -> dict | None:
+    with jobs_lock:
+        job = download_jobs.get(job_id)
+    if job:
+        return job
+    return _load_job(job_id)
+
+
+def _set_job(job_id: str, job: dict) -> None:
+    with jobs_lock:
+        download_jobs[job_id] = job
+    _save_job(job_id, job)
+
+
 def sanitize(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "", name).strip() or "Unknown"
+
+
+def _locate_downloaded_file(artist_folder: str, title: str) -> str | None:
+    safe = sanitize(title)
+    for ext in (".mp3", ".m4a", ".webm", ".opus", ".ogg"):
+        path = os.path.join(artist_folder, safe + ext)
+        if os.path.isfile(path):
+            return path
+    matches = sorted(
+        glob.glob(os.path.join(artist_folder, "*")),
+        key=os.path.getmtime,
+        reverse=True,
+    )
+    for path in matches:
+        if os.path.isfile(path) and path.lower().endswith((".mp3", ".m4a", ".webm", ".opus", ".ogg")):
+            return path
+    return None
 
 
 def make_progress_hook(songs: list, song_index: int):
@@ -315,6 +374,7 @@ def resolve_job(job_id: str, urls: list):
         download_jobs[job_id]["songs"]    = resolved_songs
         download_jobs[job_id]["resolved"] = True
         download_jobs[job_id]["status"]   = "ready"
+    _save_job(job_id, download_jobs[job_id])
 
 
 # ── Format constants & download helper ───────────────────────────────────────
@@ -411,6 +471,9 @@ def _download_songs(songs: list) -> None:
             song["status"]  = "done"
             song["progress"] = 100
             song["folder"]   = artist
+            located = _locate_downloaded_file(artist_folder, song.get("title", ""))
+            if located:
+                song["file"] = located
         except Exception as e:
             song["status"] = "error"
             song["error"]  = str(e)
@@ -424,6 +487,7 @@ def download_job(job_id: str):
 
     with jobs_lock:
         download_jobs[job_id]["status"] = "done"
+    _save_job(job_id, download_jobs[job_id])
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -434,6 +498,8 @@ def health():
         "ok": True,
         "download_folder": DOWNLOAD_FOLDER,
         "serverless": _is_serverless,
+        "render": _is_render,
+        "recommended_host": "render" if not _is_serverless else "local-or-render",
     })
 
 
@@ -467,6 +533,7 @@ def resolve():
             "resolved": False,
             "songs":    [],
         }
+    _save_job(job_id, download_jobs[job_id])
 
     threading.Thread(target=resolve_job, args=(job_id, urls), daemon=True).start()
     return jsonify({"job_id": job_id})
@@ -507,6 +574,7 @@ def start():
                 song["progress"] = 0
 
         job["status"] = "downloading"
+    _save_job(job_id, job)
 
     threading.Thread(target=download_job, args=(job_id,), daemon=True).start()
     return jsonify({"ok": True})
@@ -514,13 +582,35 @@ def start():
 
 @app.route("/status/<job_id>")
 def status(job_id):
-    with jobs_lock:
-        job = download_jobs.get(job_id)
+    job = _get_job(job_id)
 
     if not job:
         return jsonify({"error": "Job not found"}), 404
 
     return jsonify(job)
+
+
+@app.route("/download-zip/<job_id>")
+def download_zip(job_id):
+    job = _get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    files = [
+        song for song in job.get("songs", [])
+        if song.get("selected") and song.get("status") == "done" and song.get("file") and os.path.isfile(song["file"])
+    ]
+    if not files:
+        return jsonify({"error": "No completed downloads available"}), 404
+
+    zip_path = os.path.join(tempfile.gettempdir(), f"batchbeat-{job_id}.zip")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for song in files:
+            artist = song.get("folder") or song.get("artist") or "Unknown"
+            arcname = os.path.join(sanitize(artist), os.path.basename(song["file"]))
+            archive.write(song["file"], arcname)
+
+    return send_file(zip_path, as_attachment=True, download_name="batchbeat.zip")
 
 
 @app.route("/downloads-path")

@@ -6,6 +6,7 @@ __pycache__/
 venv/
 .env
 downloads/
+.jobs/
 .DS_Store
 .vercel
 cookies.txt
