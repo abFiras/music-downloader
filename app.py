@@ -7,24 +7,59 @@ import tempfile
 import threading
 import time
 from flask import Flask, render_template, request, jsonify
-import yt_dlp
 
-app = Flask(__name__, static_folder="images", static_url_path="/images")
-app.config['TEMPLATES_AUTO_RELOAD'] = True
-app.jinja_env.auto_reload = True
+_ROOT = os.path.dirname(os.path.abspath(__file__))
 
-def _default_download_folder() -> str:
+app = Flask(
+    __name__,
+    static_folder=os.path.join(_ROOT, "images"),
+    static_url_path="/images",
+    template_folder=os.path.join(_ROOT, "templates"),
+)
+_is_serverless = bool(
+    os.environ.get("VERCEL")
+    or os.environ.get("VERCEL_ENV")
+    or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+)
+app.config["TEMPLATES_AUTO_RELOAD"] = not _is_serverless
+app.jinja_env.auto_reload = not _is_serverless
+
+
+def _is_writable_dir(path: str) -> bool:
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".write_probe")
+        with open(probe, "w", encoding="utf-8") as f:
+            f.write("1")
+        os.unlink(probe)
+        return True
+    except OSError:
+        return False
+
+
+def _init_download_folder() -> str:
     override = os.environ.get("DOWNLOAD_FOLDER")
+    local = os.path.join(_ROOT, "downloads")
+    tmp = os.path.join(tempfile.gettempdir(), "downloads")
     if override:
-        return override
-    # Vercel/Lambda: /var/task is read-only; only /tmp is writable
-    if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
-        return os.path.join(tempfile.gettempdir(), "downloads")
-    return os.path.join(os.path.dirname(__file__), "downloads")
+        candidates = [override, tmp, local]
+    elif _is_serverless:
+        candidates = [tmp, local]
+    else:
+        candidates = [local, tmp]
+    seen: set[str] = set()
+    for folder in candidates:
+        if not folder or folder in seen:
+            continue
+        seen.add(folder)
+        if _is_writable_dir(folder):
+            return folder
+    fallback = os.path.join(tempfile.gettempdir(), "music-downloader")
+    os.makedirs(fallback, exist_ok=True)
+    return fallback
 
 
-DOWNLOAD_FOLDER = _default_download_folder()
-os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+DOWNLOAD_FOLDER = _init_download_folder()
 
 # ── Cookie sources ─────────────────────────────────────────────────────────────
 COOKIES_FILE         = os.environ.get("YTDLP_COOKIES_FILE")
@@ -217,6 +252,8 @@ def make_progress_hook(job_id: str, song_index: int):
 # ── Background workers ────────────────────────────────────────────────────────
 
 def resolve_job(job_id: str, urls: list):
+    import yt_dlp
+
     resolved_songs = []
 
     for url in urls:
@@ -288,6 +325,8 @@ _FORMAT_FALLBACK = "best"
 
 
 def _attempt_download(ydl_opts: dict, url: str) -> None:
+    import yt_dlp
+
     """
     Three-pass download with automatic format/client fallback.
     
@@ -389,6 +428,11 @@ def download_job(job_id: str):
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.route("/health")
+def health():
+    return jsonify({"ok": True, "download_folder": DOWNLOAD_FOLDER})
+
 
 @app.route("/")
 def index():

@@ -1,9 +1,12 @@
 {
   "experimentalServices": {
     "web": {
-      "type": "web",
+      "framework": "flask",
       "entrypoint": "app.py",
-      "routePrefix": "/"
+      "routePrefix": "/",
+      "maxDuration": 300,
+      "memory": 1024,
+      "includeFiles": ["templates/**", "images/**"]
     }
   }
 }
