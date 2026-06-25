@@ -315,6 +315,20 @@
     let pollInterval = null;
     let resolvedSongs = [];
     let currentPage = 1;
+    let isServerlessMode = false;
+
+    function finishResolve(songs) {
+      hideLoading();
+      resolvedSongs = songs || [];
+      currentPage = 1;
+      document.getElementById("selectionPanel").classList.add("visible");
+      renderPage(currentPage);
+      updateSelCount();
+      document.getElementById("resolveBtn").disabled = false;
+
+      const artists = [...new Set(resolvedSongs.filter(s => s.status !== "error").map(s => s.artist || "Unknown Artist"))];
+      showFolderSummary(artists);
+    }
 
     async function resolveURLs() {
       hideMessage();
@@ -343,7 +357,13 @@
         }
         const data = await res.json();
         currentJobId = data.job_id;
-        pollInterval = setInterval(pollResolve, 700);
+        if (data.resolved && data.songs) {
+          isServerlessMode = true;
+          finishResolve(data.songs);
+        } else {
+          isServerlessMode = false;
+          pollInterval = setInterval(pollResolve, 700);
+        }
       } catch (err) {
         showMessage("error", err.message || "Failed to resolve URLs. Try again.");
         hideLoading();
@@ -358,16 +378,7 @@
         const job = await res.json();
         if (job.resolved) {
           clearInterval(pollInterval);
-          hideLoading();
-          resolvedSongs = job.songs || [];
-          currentPage = 1;
-          document.getElementById("selectionPanel").classList.add("visible");
-          renderPage(currentPage);
-          updateSelCount();
-          document.getElementById("resolveBtn").disabled = false;
-
-          const artists = [...new Set(resolvedSongs.filter(s=>s.status!=="error").map(s=>s.artist||"Unknown Artist"))];
-          showFolderSummary(artists);
+          finishResolve(job.songs || []);
         }
       } catch (err) {
         clearInterval(pollInterval);
@@ -535,14 +546,32 @@
         const startRes = await fetch("/start", {
           method: "POST",
           headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({job_id: currentJobId, selected: selectedIndices})
+          body: JSON.stringify({
+            job_id: currentJobId,
+            selected: selectedIndices,
+            songs: isServerlessMode ? resolvedSongs : undefined
+          })
         });
         if (!startRes.ok) {
           const body = await startRes.text();
           throw new Error(body || "Unable to start download.");
         }
 
-        pollInterval = setInterval(pollDownload, 700);
+        if (isServerlessMode) {
+          const job = await startRes.json();
+          const songs = job.songs || [];
+          renderQueue(songs);
+          const sel = songs.filter(s => s.selected);
+          const done = sel.filter(s => s.status === "done").length;
+          const total = sel.length;
+          updateLoadingText("Downloading", done + " of " + total + " complete");
+          updateLoadingProgress(total ? Math.round((done / total) * 100) : 0);
+          document.getElementById("queueStats").textContent = done + " / " + total + " complete";
+          hideLoading();
+          document.getElementById("doneBanner").classList.add("visible");
+        } else {
+          pollInterval = setInterval(pollDownload, 700);
+        }
       } catch (err) {
         showMessage("error", err.message || "Download failed to start.");
         hideLoading();
@@ -643,7 +672,7 @@
     function escHtml(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
     function resetApp() {
-      currentJobId = null; clearInterval(pollInterval); resolvedSongs = []; currentPage = 1;
+      currentJobId = null; clearInterval(pollInterval); resolvedSongs = []; currentPage = 1; isServerlessMode = false;
       document.getElementById("urlInput").value = "https://www.youtube.com/watch?v=Tm8LGxTLtQk";
       document.getElementById("resolveBtn").disabled = false;
       document.getElementById("selectionPanel").classList.remove("visible");

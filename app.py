@@ -1,11 +1,13 @@
 import atexit
 import base64
+import json
 import os
 import re
 import shutil
 import tempfile
 import threading
 import time
+import uuid
 from flask import Flask, render_template, request, jsonify
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -223,35 +225,29 @@ def sanitize(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "", name).strip() or "Unknown"
 
 
-def make_progress_hook(job_id: str, song_index: int):
+def make_progress_hook(songs: list, song_index: int):
     def hook(d):
-        with jobs_lock:
-            job = download_jobs.get(job_id)
-            if not job:
-                return
-            song = job["songs"][song_index]
+        song = songs[song_index]
 
-            if d["status"] == "downloading":
-                total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
-                downloaded = d.get("downloaded_bytes", 0)
-                percent = int((downloaded / total) * 100) if total else 0
-                song["progress"] = percent
-                song["status"] = "downloading"
+        if d["status"] == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
+            downloaded = d.get("downloaded_bytes", 0)
+            percent = int((downloaded / total) * 100) if total else 0
+            song["progress"] = percent
+            song["status"] = "downloading"
 
-            elif d["status"] == "finished":
-                song["progress"] = 100
-                song["status"] = "converting"
+        elif d["status"] == "finished":
+            song["progress"] = 100
+            song["status"] = "converting"
 
-            elif d["status"] == "error":
-                song["status"] = "error"
-                song["error"] = str(d.get("error", "Unknown error"))
+        elif d["status"] == "error":
+            song["status"] = "error"
+            song["error"] = str(d.get("error", "Unknown error"))
 
     return hook
 
 
-# ── Background workers ────────────────────────────────────────────────────────
-
-def resolve_job(job_id: str, urls: list):
+def _resolve_urls(urls: list) -> list:
     import yt_dlp
 
     resolved_songs = []
@@ -306,6 +302,14 @@ def resolve_job(job_id: str, urls: list):
                 "selected": False,
                 "error":   str(e),
             })
+
+    return resolved_songs
+
+
+# ── Background workers ────────────────────────────────────────────────────────
+
+def resolve_job(job_id: str, urls: list):
+    resolved_songs = _resolve_urls(urls)
 
     with jobs_lock:
         download_jobs[job_id]["songs"]    = resolved_songs
@@ -373,20 +377,12 @@ def _attempt_download(ydl_opts: dict, url: str) -> None:
         ydl.download([url])
 
 
-def download_job(job_id: str):
-    with jobs_lock:
-        songs = download_jobs[job_id]["songs"]
-
+def _download_songs(songs: list) -> None:
     for i, song in enumerate(songs):
-        with jobs_lock:
-            selected       = download_jobs[job_id]["songs"][i].get("selected", True)
-            current_status = download_jobs[job_id]["songs"][i]["status"]
-
-        if not selected or current_status in ("done", "error"):
+        if not song.get("selected", True) or song.get("status") in ("done", "error"):
             continue
 
-        with jobs_lock:
-            download_jobs[job_id]["songs"][i]["status"] = "downloading"
+        song["status"] = "downloading"
 
         artist        = sanitize(song.get("artist", "Unknown Artist"))
         artist_folder = os.path.join(DOWNLOAD_FOLDER, artist)
@@ -399,7 +395,7 @@ def download_job(job_id: str):
             "outtmpl":     os.path.join(artist_folder, "%(title)s.%(ext)s"),
             "quiet":       True,
             "no_warnings": True,
-            "progress_hooks": [make_progress_hook(job_id, i)],
+            "progress_hooks": [make_progress_hook(songs, i)],
         })
 
         if has_ffmpeg:
@@ -412,16 +408,19 @@ def download_job(job_id: str):
 
         try:
             _attempt_download(ydl_opts, song["url"])
-
-            with jobs_lock:
-                download_jobs[job_id]["songs"][i]["status"]  = "done"
-                download_jobs[job_id]["songs"][i]["progress"] = 100
-                download_jobs[job_id]["songs"][i]["folder"]   = artist
-
+            song["status"]  = "done"
+            song["progress"] = 100
+            song["folder"]   = artist
         except Exception as e:
-            with jobs_lock:
-                download_jobs[job_id]["songs"][i]["status"] = "error"
-                download_jobs[job_id]["songs"][i]["error"]  = str(e)
+            song["status"] = "error"
+            song["error"]  = str(e)
+
+
+def download_job(job_id: str):
+    with jobs_lock:
+        songs = download_jobs[job_id]["songs"]
+
+    _download_songs(songs)
 
     with jobs_lock:
         download_jobs[job_id]["status"] = "done"
@@ -431,7 +430,11 @@ def download_job(job_id: str):
 
 @app.route("/health")
 def health():
-    return jsonify({"ok": True, "download_folder": DOWNLOAD_FOLDER})
+    return jsonify({
+        "ok": True,
+        "download_folder": DOWNLOAD_FOLDER,
+        "serverless": _is_serverless,
+    })
 
 
 @app.route("/")
@@ -447,8 +450,16 @@ def resolve():
     if not urls:
         return jsonify({"error": "No URLs provided"}), 400
 
-    import uuid
     job_id = str(uuid.uuid4())
+
+    if _is_serverless:
+        songs = _resolve_urls(urls)
+        return jsonify({
+            "job_id": job_id,
+            "resolved": True,
+            "status": "ready",
+            "songs": songs,
+        })
 
     with jobs_lock:
         download_jobs[job_id] = {
@@ -466,6 +477,23 @@ def start():
     data = request.get_json()
     job_id           = data.get("job_id")
     selected_indices = data.get("selected", [])
+    client_songs     = data.get("songs")
+
+    if _is_serverless:
+        if not client_songs:
+            return jsonify({"error": "No songs provided"}), 400
+
+        songs = json.loads(json.dumps(client_songs))
+        for i, song in enumerate(songs):
+            song["selected"] = i in selected_indices
+            if song["selected"] and song.get("status") != "done":
+                song["status"]   = "queued"
+                song["progress"] = 0
+
+        job = {"status": "downloading", "resolved": True, "songs": songs}
+        _download_songs(songs)
+        job["status"] = "done"
+        return jsonify({**job, "ok": True})
 
     with jobs_lock:
         job = download_jobs.get(job_id)
@@ -502,6 +530,11 @@ def downloads_path():
 
 @app.route("/favicon.ico")
 def favicon():
+    return "", 204
+
+
+@app.route("/favicon.png")
+def favicon_png():
     return "", 204
 
 
